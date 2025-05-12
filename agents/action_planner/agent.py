@@ -8,6 +8,7 @@ from pydantic_ai import Agent
 from .agent_prompts import SYSTEM_PROMPT
 
 # Logfire instrumentation is enabled if API key is set
+logfire_api_key = os.getenv('LOGFIRE_KEY')
 logfire.configure(send_to_logfire='if-token-present')
 
 class TroubleshootingStep(BaseModel):
