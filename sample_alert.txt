@@ -1,0 +1,18 @@
+{
+  "search_name": "Routing Table Limit Exceeded",
+  "search_query": "index=network_logs sourcetype=syslog \"RT_TABLE_OVERFLOW\"",
+  "owner": "network-ops",
+  "results_link": "https://splunk.example.com/app/search/@go?sid=1683891234.5678",
+  "time": "2025-05-12T08:15:30Z",
+  "result": {
+    "hostname": "router1.siteA.example.com",
+    "ip_address": "192.0.2.10",
+    "platform": "ASR9906",
+    "os_version": "7.8.2",
+    "severity": "critical",
+    "category": "routing",
+    "event_id": "ROUTE_TABLE_LIMIT_EXCEEDED",
+    "description": "Routing table size exceeded safe operational threshold",
+    "raw_event": "%ROUTING-4-RT_TABLE_OVERFLOW : Default VRF has exceeded the maximum routing table size limit (current: 1100000, threshold: 1000000)"
+  }
+}

@@ -2,8 +2,9 @@ from __future__ import annotations as _annotations
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from typing import Literal
+from typing import Literal, Dict, Any
 from pydantic_ai import Agent
+from datetime import datetime
 
 from .agent_prompts import FAULT_SUMMARY_SYSTEM_PROMPT
 
@@ -12,14 +13,14 @@ load_dotenv()
 
 # Structured output schema for fault summarization
 class FaultSummary(BaseModel):
-    """Structured summary of a diagnosed network fault."""
-    issue_type: Literal[
-        "connectivity", "latency", "packet loss", "DNS", "routing", "hardware failure", "configuration", "other"
-    ] = Field(..., description="Identified network issue category")
-    most_likely_root_cause: str = Field(..., description="Concise analysis of probable root cause")
+    """Structured summary of a diagnosed network fault alert."""
+    title: str = Field(..., description="A concise title for the network alert")
+    summary: str = Field(..., description="A concise summary of the alert")
+    hostname: str = Field(..., description="Hostname of the target device")
+    operating_system: str = Field(..., description="Operating system of the target device")
     severity: Literal["Critical", "High", "Medium", "Low"] = Field(..., description="Estimated impact and urgency")
-    immediate_action_recommendations: str = Field(..., description="Specific, actionable steps to remediate")
-    summary: str = Field(..., description="One-sentence technical summary")
+    timestamp: datetime = Field(..., description="Timestamp when the alert occurred")
+    original_alert_details: Dict[str, Any] = Field(..., description="Original alert details in JSON format")
 
 # Initialize the Fault Summary agent with structured output
 agent = Agent(
@@ -38,6 +39,6 @@ async def run(user_input: str):
         user_input: The user's description of the network fault
         
     Returns:
-        The agent's response object containing the structured FaultSummary
+        The agent's response object containing the structured NetworkFaultSummary
     """
     return await agent.run(user_input)
