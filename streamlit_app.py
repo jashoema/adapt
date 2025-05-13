@@ -27,19 +27,11 @@ from agents.fault_summary.agent import FaultSummary
 from agents.action_analyzer.agent import ActionAnalyzerDependencies
 
 # Initialize agent dependencies
-simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
-debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "false"
-fault_summary = FaultSummary()
-action_plan = []
-current_action = 0
-
-# Initialize debug logs in session state if they don't exist
-if "debug_logs" not in st.session_state:
-    st.session_state.debug_logs = []
-
-# Initialize debug_mode in session state if it doesn't exist
+if "simulation_mode" not in st.session_state:
+    st.session_state.simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
 if "debug_mode" not in st.session_state:
-    st.session_state.debug_mode = False
+    st.session_state.debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "false"
+
 
 # Set page configuration
 st.set_page_config(
@@ -61,16 +53,13 @@ with st.sidebar:
     
     # Add toggles for simulation_mode and debug_mode
     st.header("Settings")
-    simulation_mode = st.toggle("Simulation Mode", value=True, help="Enable simulation mode to run commands without actual execution")
-    debug_mode = st.toggle("Debug Mode", value=False, help="Enable debug mode for additional logging and information")
+    simulation_mode = st.toggle("Simulation Mode", value=st.session_state.simulation_mode, help="Enable simulation mode to run commands without actual execution")
+    debug_mode = st.toggle("Debug Mode", value=st.session_state.debug_mode, help="Enable debug mode for additional logging and information")
     
-    # Update session state when debug mode toggle changes
+    # Update session state when toggles change
+    st.session_state.simulation_mode = simulation_mode
     st.session_state.debug_mode = debug_mode
     
-    # Clear debug logs if debug mode is toggled off
-    if not debug_mode and st.session_state.debug_logs:
-        st.session_state.debug_logs = []
-
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
     st.markdown("### 👋 Hello World Agent")
@@ -88,7 +77,7 @@ elif agent_type == "Action Analyzer":
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
-    st.info("Currently running in: " + ("SIMULATION mode" if simulation_mode else "REAL EXECUTION mode via SSH"))
+    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.simulation_mode else "REAL EXECUTION mode via SSH"))
     # Add device info display
     device_info = {
         "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
@@ -310,7 +299,7 @@ if user_input:
                     # Create dependencies for the action executor
                     action_executor_deps = ActionExecutorDeps(
                         current_action=action,
-                        simulation_mode=simulation_mode,
+                        simulation_mode=st.session_state.simulation_mode,
                         device=device_credentials,
                         client=AsyncClient()
                     )
@@ -321,14 +310,14 @@ if user_input:
                     )
 
                     result_command_outputs = getattr(result.output,"command_outputs", [{"cmd": "No output", "output": "No output"}])
-                    simulation_mode = getattr(result.output,"simulation_mode", True)
+                    result_simulation_mode = getattr(result.output,"simulation_mode", True)
                     result_errors = getattr(result.output,"errors", [])
                     
                     # Format the output for display based on the updated ActionExecutorOutput structure
                     formatted_output = f"""
 ### Command Execution Result
 
-**Simulation Mode:** {"Yes" if simulation_mode else "No"}
+**Simulation Mode:** {"Yes" if result_simulation_mode else "No"}
 
 **Command Outputs:**
 """
