@@ -26,6 +26,9 @@ from agents.action_planner.agent import ActionPlannerDependencies, Troubleshooti
 from agents.fault_summary.agent import FaultSummary
 from agents.action_analyzer.agent import ActionAnalyzerDependencies
 
+# Import the graph for the Multi-Agent workflow
+from graph import run_graph
+
 # Initialize agent dependencies
 if "simulation_mode" not in st.session_state:
     st.session_state.simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
@@ -48,7 +51,7 @@ with st.sidebar:
     st.header("Select Agent")
     agent_type = st.radio(
         "Choose an agent:",
-        ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor", "Action Analyzer"]
+        ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor", "Action Analyzer", "Multi-Agent"]
     )
     
     # Add toggles for simulation_mode and debug_mode
@@ -74,6 +77,25 @@ elif agent_type == "Action Analyzer":
     st.markdown("### 📊 Action Analyzer")
     st.markdown("This agent analyzes the output of network commands and provides structured insights, findings, and recommendations.")
     st.info("Enter a network command output to analyze, or paste the full output of a previous command execution.")
+elif agent_type == "Multi-Agent":
+    st.markdown("### 🔄 Multi-Agent Network Troubleshooter")
+    st.markdown("This workflow connects all agents together using LangGraph to provide end-to-end network troubleshooting.")
+    st.markdown("Describe a network issue, and the workflow will run through these steps:")
+    st.markdown("1. 🔧 **Fault Summary**: Analyze and summarize the issue")
+    st.markdown("2. 🔍 **Action Planning**: Create a troubleshooting plan with specific steps")
+    st.markdown("3. 🖥️ **Action Execution**: Execute each step of the plan")
+    st.markdown("4. 📊 **Action Analysis**: Analyze the output of each step")
+    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.simulation_mode else "REAL EXECUTION mode via SSH"))
+    
+    # Add device info display for Multi-Agent as well
+    device_info = {
+        "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
+        "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
+        "SSH Port": os.getenv("DEVICE_PORT", "22")
+    }
+    st.sidebar.subheader("Device Information")
+    for key, value in device_info.items():
+        st.sidebar.text(f"{key}: {value}")
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
@@ -140,6 +162,101 @@ if user_input:
                     # Pass debug_mode and logger to the agent
                     result = await run_hello_world(user_input, debug_mode=debug_mode, logger=agent_logger)
                     return result.output
+                elif agent_type == "Multi-Agent":
+                    if debug_mode:
+                        agent_logger.info("Running Multi-Agent Workflow", extra={"user_input": user_input})
+                    
+                    # Create device credentials from environment variables
+                    device_hostname = os.getenv("DEVICE_HOSTNAME", "192.0.2.100")
+                    device_type = os.getenv("DEVICE_TYPE", "cisco_ios")
+                    
+                    # Run the entire workflow using the graph module
+                    final_state = await run_graph(
+                        input_text=user_input,
+                        device_hostname=device_hostname,
+                        device_type=device_type,
+                        simulation_mode=st.session_state.simulation_mode
+                    )
+                    
+                    # Format the output from the workflow for display
+                    formatted_output = "### 🔄 Multi-Agent Network Troubleshooting Results\n\n"
+                    
+                    # Add fault summary section
+                    if final_state.get("fault_summary"):
+                        fault_summary = final_state["fault_summary"]
+                        formatted_output += f"## 🔧 Fault Summary\n\n"
+                        formatted_output += f"**Title:** {fault_summary.title}\n\n"
+                        formatted_output += f"**Summary:** {fault_summary.summary}\n\n"
+                        formatted_output += f"**Device:** {fault_summary.hostname}\n\n"
+                        formatted_output += f"**OS:** {fault_summary.operating_system}\n\n"
+                        formatted_output += f"**Severity:** {fault_summary.severity}\n\n"
+                        formatted_output += "---\n\n"
+                    
+                    # Add action plan section
+                    if final_state.get("action_plan"):
+                        action_plan = final_state["action_plan"]
+                        formatted_output += f"## 🔍 Action Plan\n\n"
+                        
+                        for i, step in enumerate(action_plan, 1):
+                            approval_tag = "⚠️ **Requires Approval**" if step.requires_approval else "✅ **Safe to Execute**"
+                            formatted_output += f"### Step {i}: {step.description}\n\n"
+                            formatted_output += f"{approval_tag}\n\n"
+                            formatted_output += f"**Command:**\n```\n{step.command}\n```\n\n"
+                            formatted_output += f"**Expected Output:**\n{step.output_expectation}\n\n"
+                            
+                            # Add execution result for completed steps
+                            current_step = final_state.get("current_step_index", 0)
+                            if i <= current_step and final_state.get("execution_result"):
+                                formatted_output += f"**Execution Result:**\n\n"
+                                execution_result = final_state["execution_result"]
+                                
+                                if i == current_step - 1:  # Most recent step
+                                    for cmd_output in execution_result.get("command_outputs", []):
+                                        formatted_output += f"Command: `{cmd_output['cmd']}`\n\n"
+                                        formatted_output += f"```\n{cmd_output['output']}\n```\n\n"
+                                else:
+                                    formatted_output += "Step executed.\n\n"
+                            
+                            formatted_output += "---\n\n"
+                    
+                    # Add analysis section
+                    if final_state.get("analysis_report"):
+                        analysis = final_state["analysis_report"]
+                        formatted_output += f"## 📊 Analysis Results\n\n"
+                        
+                        # Key Findings
+                        formatted_output += "### Key Findings\n"
+                        for finding in analysis.key_findings:
+                            formatted_output += f"- {finding}\n"
+                        formatted_output += "\n"
+                        
+                        # Issues
+                        formatted_output += "### Issues Identified\n"
+                        if analysis.issues_identified:
+                            for issue in analysis.issues_identified:
+                                formatted_output += f"- {issue}\n"
+                        else:
+                            formatted_output += "- No issues identified\n"
+                        formatted_output += "\n"
+                        
+                        # Recommendations
+                        formatted_output += "### Recommendations\n"
+                        for recommendation in analysis.recommendations:
+                            formatted_output += f"- {recommendation}\n"
+                        formatted_output += "\n"
+                        
+                        # Confidence level
+                        formatted_output += f"**Confidence Level:** {analysis.confidence_level}\n\n"
+                        
+                        formatted_output += "---\n\n"
+                    
+                    # Add status message
+                    if final_state.get("current_step_index", 0) >= len(final_state.get("action_plan", [])):
+                        formatted_output += "✅ **Workflow completed successfully**\n"
+                    else:
+                        formatted_output += "⏳ **Workflow in progress - provide additional input to continue**\n"
+                    
+                    return formatted_output
                 elif agent_type == "Fault Summarizer":
                     if debug_mode:
                         agent_logger.info("Running Fault Summarizer Agent", extra={"user_input": user_input})

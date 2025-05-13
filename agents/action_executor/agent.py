@@ -96,9 +96,6 @@ async def run(deps: ActionExecutorDeps, debug_mode: bool = False, logger: Option
     commands = deps.current_action.command.splitlines()  # Split user input into multiple commands
 
     for command in commands:
-        logger.info(
-            f"Executing command. Simulation: {simulation}, Device: {device['hostname']}, Commands: {commands}"
-        )
         
         if deps.debug_mode and deps.logger:
             deps.logger.info(f"Executing command", extra={
