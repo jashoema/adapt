@@ -4,6 +4,13 @@ import os
 from dotenv import load_dotenv
 from httpx import AsyncClient
 from datetime import datetime
+import logging
+
+# Import the custom StreamlitLogger
+from utils.streamlit_logger import get_streamlit_logger
+
+# Create a main logger for the streamlit app
+logger = get_streamlit_logger("streamlit_app")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,6 +33,14 @@ fault_summary = FaultSummary()
 action_plan = []
 current_action = 0
 
+# Initialize debug logs in session state if they don't exist
+if "debug_logs" not in st.session_state:
+    st.session_state.debug_logs = []
+
+# Initialize debug_mode in session state if it doesn't exist
+if "debug_mode" not in st.session_state:
+    st.session_state.debug_mode = False
+
 # Set page configuration
 st.set_page_config(
     page_title="AI Agents Dashboard",
@@ -43,6 +58,18 @@ with st.sidebar:
         "Choose an agent:",
         ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor", "Action Analyzer"]
     )
+    
+    # Add toggles for simulation_mode and debug_mode
+    st.header("Settings")
+    simulation_mode = st.toggle("Simulation Mode", value=True, help="Enable simulation mode to run commands without actual execution")
+    debug_mode = st.toggle("Debug Mode", value=False, help="Enable debug mode for additional logging and information")
+    
+    # Update session state when debug mode toggle changes
+    st.session_state.debug_mode = debug_mode
+    
+    # Clear debug logs if debug mode is toggled off
+    if not debug_mode and st.session_state.debug_logs:
+        st.session_state.debug_logs = []
 
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
@@ -61,7 +88,7 @@ elif agent_type == "Action Analyzer":
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
-    st.info("Currently running in: " + ("SIMULATION mode" if os.getenv("SIMULATION_MODE", "true").lower() == "true" else "REAL EXECUTION mode via SSH"))
+    st.info("Currently running in: " + ("SIMULATION mode" if simulation_mode else "REAL EXECUTION mode via SSH"))
     # Add device info display
     device_info = {
         "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
@@ -80,6 +107,10 @@ if "messages" not in st.session_state:
 if "current_agent" not in st.session_state or st.session_state.current_agent != agent_type:
     st.session_state.messages = []
     st.session_state.current_agent = agent_type
+
+# Initialize current_response for debug logging
+if "current_response" not in st.session_state:
+    st.session_state.current_response = None
 
 # Display chat history
 for message in st.session_state.messages:
@@ -104,11 +135,28 @@ if user_input:
         with st.spinner("Thinking..."):
             # Get response from the appropriate agent
             async def get_response():
+                # Create a logger specific to the current agent
+                agent_logger = get_streamlit_logger(f"agent.{agent_type.replace(' ', '_').lower()}")
+                
+                # Initialize empty response for debug messages to append to
+                st.session_state.current_response = ""
+                
+                if debug_mode:
+                    logger.info(f"Processing input with {agent_type}", extra={"user_input": user_input})
+                
                 if agent_type == "Hello World Agent":
-                    result = await run_hello_world(user_input)
+                    if debug_mode:
+                        agent_logger.info("Running Hello World Agent", extra={"user_input": user_input})
+                    
+                    # Pass debug_mode and logger to the agent
+                    result = await run_hello_world(user_input, debug_mode=debug_mode, logger=agent_logger)
                     return result.output
                 elif agent_type == "Fault Summarizer":
-                    result = await run_fault_summary(user_input)
+                    if debug_mode:
+                        agent_logger.info("Running Fault Summarizer Agent", extra={"user_input": user_input})
+                    
+                    # Pass debug_mode and logger to the agent
+                    result = await run_fault_summary(user_input, debug_mode=debug_mode, logger=agent_logger)
                     # Format structured output for display
                     fault_summary = result.output
                     formatted_output = f"""
@@ -135,6 +183,9 @@ if user_input:
                     """
                     return formatted_output
                 elif agent_type == "Network Troubleshooting Planner":
+                    if debug_mode:
+                        agent_logger.info("Running Network Troubleshooting Planner Agent", extra={"user_input": user_input})
+                    
                     # Create a new FaultSummary with the user input as the summary
                     # THIS IS ONLY TEMPORARY until we introduce LangGraph
                     network_fault_summary = FaultSummary(
@@ -146,7 +197,7 @@ if user_input:
                     action_planner_deps = ActionPlannerDependencies(fault_summary=network_fault_summary)
                     
                     # Call the action planner with the dependencies
-                    result = await run_action_planner(user_input, deps=action_planner_deps)
+                    result = await run_action_planner(user_input, deps=action_planner_deps, debug_mode=debug_mode, logger=agent_logger)
                     action_plan = result.output
                     
                     # Format the troubleshooting steps for display
@@ -162,6 +213,9 @@ if user_input:
                     
                     return formatted_output
                 elif agent_type == "Action Analyzer":
+                    if debug_mode:
+                        agent_logger.info("Running Action Analyzer Agent", extra={"user_input": user_input})
+                    
                     # For demonstration purposes, use a sample output and dependencies
                     # In a real workflow, these would come from previous steps in the troubleshooting process
                     
@@ -204,7 +258,7 @@ if user_input:
                     )
                     
                     # Call the action analyzer with the user input and dependencies
-                    result = await run_action_analyzer(deps=action_analyzer_deps)
+                    result = await run_action_analyzer(deps=action_analyzer_deps, debug_mode=debug_mode, logger=agent_logger)
                     analysis_report = result.output
                     
                     # Format the analysis report for display
@@ -233,6 +287,9 @@ if user_input:
                     
                     return formatted_output
                 else:  # Command Executor
+                    if debug_mode:
+                        agent_logger.info("Running Command Executor Agent", extra={"user_input": user_input})
+                    
                     # Create device credentials from environment variables
                     device_credentials = DeviceCredentials(
                         hostname=os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
@@ -253,14 +310,14 @@ if user_input:
                     # Create dependencies for the action executor
                     action_executor_deps = ActionExecutorDeps(
                         current_action=action,
-                        simulation_mode=os.getenv("SIMULATION_MODE", "true").lower() == "true",
+                        simulation_mode=simulation_mode,
                         device=device_credentials,
                         client=AsyncClient()
                     )
                     
                     # Execute the commands using the action_executor agent
                     result = await run_action_executor(
-                        deps=action_executor_deps  # Split user input into multiple commands
+                        deps=action_executor_deps, debug_mode=debug_mode, logger=agent_logger
                     )
 
                     result_command_outputs = getattr(result.output,"command_outputs", [{"cmd": "No output", "output": "No output"}])
@@ -293,7 +350,19 @@ if user_input:
                     return formatted_output
             
             response = asyncio.run(get_response())
-            message_placeholder.markdown(response)
+            
+            # If in debug mode and we have accumulated debug info, prepend it to the response
+            if debug_mode and st.session_state.current_response:
+                # Add a divider between debug logs and actual response
+                full_response = st.session_state.current_response + "\n\n---\n\n" + response
+                message_placeholder.markdown(full_response)
+                # Save the combined response
+                response = full_response
+            else:
+                message_placeholder.markdown(response)
+            
+            # Reset the current response accumulator
+            st.session_state.current_response = None
     
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": response})

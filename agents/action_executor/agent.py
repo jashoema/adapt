@@ -52,6 +52,8 @@ class ActionExecutorDeps:
     simulation_mode: bool
     device: DeviceCredentials
     client: AsyncClient  # For Pydantic AI usage, potential future tool integration
+    debug_mode: bool = False
+    logger: Optional[Any] = None
 
 # Main Agent
 action_executor = Agent(
@@ -66,17 +68,29 @@ action_executor = Agent(
     instrument=True
 )
 
-async def run(deps: ActionExecutorDeps) -> ActionExecutorOutput:
+async def run(deps: ActionExecutorDeps, debug_mode: bool = False, logger: Optional[Any] = None) -> RunContext:
     """
     Main agent logic for executing network commands.
 
     Args:
         deps: The dependencies containing simulation mode and device info.
-        commands: The CLI commands to execute.
+        debug_mode: Whether to log detailed debugging information
+        logger: Optional logger instance to use for logging
 
     Returns:
         Execution output and status.
     """
+    # Update debug_mode and logger in dependencies if provided
+    if debug_mode and logger:
+        deps.debug_mode = debug_mode
+        deps.logger = logger
+        
+        # Log debug information
+        logger.info("Action Executor Agent System Prompt", extra={
+            "system_prompt": SYSTEM_PROMPT,
+            "task_prompt": TASK_PROMPT
+        })
+    
     simulation = deps.simulation_mode
     device = deps.device.__dict__
     commands = deps.current_action.command.splitlines()  # Split user input into multiple commands
@@ -85,6 +99,13 @@ async def run(deps: ActionExecutorDeps) -> ActionExecutorOutput:
         logger.info(
             f"Executing command. Simulation: {simulation}, Device: {device['hostname']}, Commands: {commands}"
         )
+        
+        if deps.debug_mode and deps.logger:
+            deps.logger.info(f"Executing command", extra={
+                "command": command,
+                "simulation_mode": simulation,
+                "device": device['hostname']
+            })
 
     # Create a more descriptive user prompt to guide the agent about simulation mode
     user_prompt = f"""
@@ -102,6 +123,11 @@ async def run(deps: ActionExecutorDeps) -> ActionExecutorOutput:
     REMEMBER: If simulation_mode is TRUE, you must generate realistic device output yourself.
     If simulation_mode is FALSE, you should use the appropriate tool to execute commands on the real device.
     """
+    
+    if deps.debug_mode and deps.logger:
+        deps.logger.info("User prompt for Action Executor", extra={
+            "user_prompt": user_prompt
+        })
     
     # Execute the agent with the user prompt
     return await action_executor.run(user_prompt, deps=deps)

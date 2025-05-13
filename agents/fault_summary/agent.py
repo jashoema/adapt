@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 import os
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from typing import Literal, Dict, Any
+from typing import Literal, Dict, Any, Optional
 from pydantic_ai import Agent
 from datetime import datetime
 
@@ -31,14 +31,23 @@ agent = Agent(
     instrument=True,
 )
 
-async def run(user_input: str):
+async def run(user_input: str, debug_mode: bool = False, logger: Optional[Any] = None):
     """
     Run the fault summary agent with the given user input.
     
     Args:
         user_input: The user's description of the network fault
+        debug_mode: Whether to log detailed debugging information
+        logger: Optional logger instance to use for logging
         
     Returns:
         The agent's response object containing the structured NetworkFaultSummary
     """
+    # Log debug information if debug mode is enabled
+    if debug_mode and logger:
+        logger.info("Fault Summary Agent System Prompt", extra={
+            "system_prompt": FAULT_SUMMARY_SYSTEM_PROMPT,
+            "user_input": user_input
+        })
+        
     return await agent.run(user_input)
