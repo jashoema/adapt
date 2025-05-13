@@ -3,6 +3,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 from httpx import AsyncClient
+from datetime import datetime
 
 # Load environment variables from .env file
 load_dotenv()
@@ -12,7 +13,18 @@ from agents.hello_world import run as run_hello_world
 from agents.fault_summary import run as run_fault_summary
 from agents.action_planner import run as run_action_planner
 from agents.action_executor import run as run_action_executor
+from agents.action_analyzer import run as run_action_analyzer
 from agents.action_executor.agent import DeviceCredentials, ActionExecutorDeps
+from agents.action_planner.agent import ActionPlannerDependencies, TroubleshootingStep
+from agents.fault_summary.agent import FaultSummary
+from agents.action_analyzer.agent import ActionAnalyzerDependencies
+
+# Initialize agent dependencies
+simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
+debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "false"
+fault_summary = FaultSummary()
+action_plan = []
+current_action = 0
 
 # Set page configuration
 st.set_page_config(
@@ -29,7 +41,7 @@ with st.sidebar:
     st.header("Select Agent")
     agent_type = st.radio(
         "Choose an agent:",
-        ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor"]
+        ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor", "Action Analyzer"]
     )
 
 # Display appropriate header and description based on selected agent
@@ -42,6 +54,10 @@ elif agent_type == "Fault Summarizer":
 elif agent_type == "Network Troubleshooting Planner":
     st.markdown("### 🔍 Network Troubleshooting Planner")
     st.markdown("Provide a summary of a network fault, and this agent will create a detailed troubleshooting plan with specific commands to execute.")
+elif agent_type == "Action Analyzer":
+    st.markdown("### 📊 Action Analyzer")
+    st.markdown("This agent analyzes the output of network commands and provides structured insights, findings, and recommendations.")
+    st.info("Enter a network command output to analyze, or paste the full output of a previous command execution.")
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
@@ -119,19 +135,101 @@ if user_input:
                     """
                     return formatted_output
                 elif agent_type == "Network Troubleshooting Planner":
-                    result = await run_action_planner(user_input)
-                    troubleshooting_steps = result.output
+                    # Create a new FaultSummary with the user input as the summary
+                    # THIS IS ONLY TEMPORARY until we introduce LangGraph
+                    network_fault_summary = FaultSummary(
+                        summary=user_input,
+                        original_alert_details={"source": "user_input", "raw_text": user_input}
+                    )
+                    
+                    # Create the dependency object
+                    action_planner_deps = ActionPlannerDependencies(fault_summary=network_fault_summary)
+                    
+                    # Call the action planner with the dependencies
+                    result = await run_action_planner(user_input, deps=action_planner_deps)
+                    action_plan = result.output
                     
                     # Format the troubleshooting steps for display
                     formatted_output = "### Network Troubleshooting Plan\n\n"
                     
-                    for i, step in enumerate(troubleshooting_steps, 1):
+                    for i, step in enumerate(action_plan, 1):
                         approval_tag = "⚠️ **Requires Approval**" if step.requires_approval else "✅ **Safe to Execute**"
                         formatted_output += f"## Step {i}: {step.description}\n\n"
                         formatted_output += f"{approval_tag}\n\n"
                         formatted_output += f"**Command:**\n```\n{step.command}\n```\n\n"
                         formatted_output += f"**Expected Output:**\n{step.output_expectation}\n\n"
                         formatted_output += "---\n\n"
+                    
+                    return formatted_output
+                elif agent_type == "Action Analyzer":
+                    # For demonstration purposes, use a sample output and dependencies
+                    # In a real workflow, these would come from previous steps in the troubleshooting process
+                    
+                    # Create a simulated command output for the action executor
+                    command_output = {
+                        "cmd": user_input.splitlines()[0],  # Use the first line of user input as the command
+                        "output": user_input  # Use the user input as the command output to analyze
+                    }
+                    
+                    # Create sample dependencies for the analyzer
+                    network_fault_summary = FaultSummary(
+                        title="Network Interface Analysis",
+                        summary="Analyzing network interface performance and errors",
+                        hostname="router1.example.com",
+                        operating_system="Cisco IOS",
+                        severity="Medium",
+                        timestamp=datetime.now().isoformat(),
+                        original_alert_details={"source": "user_input", "raw_text": "Interface analysis"}
+                    )
+                    
+                    action = TroubleshootingStep(
+                        description="Analyze interface statistics",
+                        command="show interfaces",
+                        output_expectation="Review for errors, bandwidth utilization, and packet loss",
+                        requires_approval=False
+                    )
+                    
+                    executor_output = type('ActionExecutorOutput', (), {
+                        'command_outputs': [command_output],
+                        'simulation_mode': True,
+                        'errors': None
+                    })
+                    
+                    # Create the dependency object for the analyzer
+                    action_analyzer_deps = ActionAnalyzerDependencies(
+                        executor_output=executor_output,
+                        action_plan=[action],
+                        fault_summary=network_fault_summary,
+                        current_step=action
+                    )
+                    
+                    # Call the action analyzer with the user input and dependencies
+                    result = await run_action_analyzer(deps=action_analyzer_deps)
+                    analysis_report = result.output
+                    
+                    # Format the analysis report for display
+                    formatted_output = """### Network Command Output Analysis\n\n"""
+                    
+                    # Key Findings section
+                    formatted_output += "#### 📊 Key Findings\n"
+                    for finding in analysis_report.key_findings:
+                        formatted_output += f"- {finding}\n"
+                    
+                    # Issues section
+                    formatted_output += "\n#### ⚠️ Issues Identified\n"
+                    if analysis_report.issues_identified:
+                        for issue in analysis_report.issues_identified:
+                            formatted_output += f"- {issue}\n"
+                    else:
+                        formatted_output += "- No issues identified\n"
+                    
+                    # Recommendations section
+                    formatted_output += "\n#### 📋 Recommendations\n"
+                    for recommendation in analysis_report.recommendations:
+                        formatted_output += f"- {recommendation}\n"
+                    
+                    # Confidence level
+                    formatted_output += f"\n**Confidence Level:** {analysis_report.confidence_level}\n"
                     
                     return formatted_output
                 else:  # Command Executor
@@ -145,8 +243,16 @@ if user_input:
                         secret=os.getenv("DEVICE_SECRET", None)
                     )
                     
+                    action = TroubleshootingStep(
+                        description="Execute CLI command",
+                        command=user_input,
+                        output_expectation="Command should execute successfully",
+                        requires_approval=False
+                    )
+
                     # Create dependencies for the action executor
-                    deps = ActionExecutorDeps(
+                    action_executor_deps = ActionExecutorDeps(
+                        current_action=action,
                         simulation_mode=os.getenv("SIMULATION_MODE", "true").lower() == "true",
                         device=device_credentials,
                         client=AsyncClient()
@@ -154,8 +260,7 @@ if user_input:
                     
                     # Execute the commands using the action_executor agent
                     result = await run_action_executor(
-                        deps=deps,
-                        commands=user_input.splitlines()  # Split user input into multiple commands
+                        deps=action_executor_deps  # Split user input into multiple commands
                     )
 
                     result_command_outputs = getattr(result.output,"command_outputs", [{"cmd": "No output", "output": "No output"}])

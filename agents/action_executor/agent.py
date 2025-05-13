@@ -10,6 +10,7 @@ from pydantic_ai import Agent, RunContext, ModelRetry
 
 from .agent_tools import execute_cli_command, execute_cli_config
 from .agent_prompts import SYSTEM_PROMPT, TASK_PROMPT
+from ..action_planner.agent import TroubleshootingStep
 
 import logfire
 
@@ -47,6 +48,7 @@ class ActionExecutorOutput:
 
 @dataclass
 class ActionExecutorDeps:
+    current_action: TroubleshootingStep
     simulation_mode: bool
     device: DeviceCredentials
     client: AsyncClient  # For Pydantic AI usage, potential future tool integration
@@ -60,10 +62,11 @@ action_executor = Agent(
     output_type=ActionExecutorOutput,
     retries=2,
     name="action_executor",
-    description="Network device automation agent that executes CLI commands (e.g. show, config, etc) using SSH or simulation."
+    description="Network device automation agent that executes CLI commands (e.g. show, config, etc) using SSH or simulation.",
+    instrument=True
 )
 
-async def run(deps: ActionExecutorDeps, commands: list[str]) -> ActionExecutorOutput:
+async def run(deps: ActionExecutorDeps) -> ActionExecutorOutput:
     """
     Main agent logic for executing network commands.
 
@@ -76,6 +79,7 @@ async def run(deps: ActionExecutorDeps, commands: list[str]) -> ActionExecutorOu
     """
     simulation = deps.simulation_mode
     device = deps.device.__dict__
+    commands = deps.current_action.command.splitlines()  # Split user input into multiple commands
 
     for command in commands:
         logger.info(
