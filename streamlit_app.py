@@ -4,7 +4,10 @@ import os
 from dotenv import load_dotenv
 from httpx import AsyncClient
 from datetime import datetime
+import uuid
 import logging
+
+from langgraph.types import Command
 
 # Import the custom StreamlitLogger
 from utils.streamlit_logger import get_streamlit_logger
@@ -27,14 +30,7 @@ from agents.fault_summary.agent import FaultSummary
 from agents.action_analyzer.agent import ActionAnalyzerDependencies
 
 # Import the graph for the Multi-Agent workflow
-from graph import run_graph
-
-# Initialize agent dependencies
-if "simulation_mode" not in st.session_state:
-    st.session_state.simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
-if "debug_mode" not in st.session_state:
-    st.session_state.debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "false"
-
+from graph import agentic_flow
 
 # Set page configuration
 st.set_page_config(
@@ -42,6 +38,43 @@ st.set_page_config(
     page_icon="🤖",
     layout="centered"
 )
+
+
+@st.cache_resource
+def get_thread_id():
+    return str(uuid.uuid4())
+
+thread_id = get_thread_id()
+
+async def run_agent_with_streaming(user_input: str, simulation_mode: bool = True):
+    """
+    Run the agent with streaming text for the user_input prompt,
+    while maintaining the entire conversation in `st.session_state.messages`.
+    """
+    config = {
+        "configurable": {
+            "thread_id": thread_id
+        }
+    }
+
+    # First message from user
+    if len(st.session_state.messages) == 1:
+        async for msg in agentic_flow.astream(
+                {"latest_user_message": user_input, "simulation_mode": simulation_mode}, config, stream_mode="custom"
+            ):
+                yield msg
+    # Continue the conversation
+    else:
+        async for msg in agentic_flow.astream(
+            Command(resume=user_input), config, stream_mode="custom"
+        ):
+            yield msg
+
+# Initialize agent dependencies
+if "simulation_mode" not in st.session_state:
+    st.session_state.simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
+if "debug_mode" not in st.session_state:
+    st.session_state.debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "false"
 
 # Add a title and description
 st.title("🤖 AI Agents Dashboard")
@@ -170,93 +203,100 @@ if user_input:
                     device_hostname = os.getenv("DEVICE_HOSTNAME", "192.0.2.100")
                     device_type = os.getenv("DEVICE_TYPE", "cisco_ios")
                     
-                    # Run the entire workflow using the graph module
-                    final_state = await run_graph(
-                        input_text=user_input,
-                        device_hostname=device_hostname,
-                        device_type=device_type,
-                        simulation_mode=st.session_state.simulation_mode
-                    )
+                    response_content = ""
+                    async for chunk in run_agent_with_streaming(user_input):
+                        response_content += chunk
+                        # Update the placeholder with the current response content
+                        message_placeholder.markdown(response_content)
+
+                    return response_content
+                    # # Run the entire workflow using the graph module
+                    # final_state = await run_graph(
+                    #     input_text=user_input,
+                    #     device_hostname=device_hostname,
+                    #     device_type=device_type,
+                    #     simulation_mode=st.session_state.simulation_mode
+                    # )
                     
-                    # Format the output from the workflow for display
-                    formatted_output = "### 🔄 Multi-Agent Network Troubleshooting Results\n\n"
+                    # # Format the output from the workflow for display
+                    # formatted_output = "### 🔄 Multi-Agent Network Troubleshooting Results\n\n"
                     
-                    # Add fault summary section
-                    if final_state.get("fault_summary"):
-                        fault_summary = final_state["fault_summary"]
-                        formatted_output += f"## 🔧 Fault Summary\n\n"
-                        formatted_output += f"**Title:** {fault_summary.title}\n\n"
-                        formatted_output += f"**Summary:** {fault_summary.summary}\n\n"
-                        formatted_output += f"**Device:** {fault_summary.hostname}\n\n"
-                        formatted_output += f"**OS:** {fault_summary.operating_system}\n\n"
-                        formatted_output += f"**Severity:** {fault_summary.severity}\n\n"
-                        formatted_output += "---\n\n"
+                    # # Add fault summary section
+                    # if final_state.get("fault_summary"):
+                    #     fault_summary = final_state["fault_summary"]
+                    #     formatted_output += f"## 🔧 Fault Summary\n\n"
+                    #     formatted_output += f"**Title:** {fault_summary.title}\n\n"
+                    #     formatted_output += f"**Summary:** {fault_summary.summary}\n\n"
+                    #     formatted_output += f"**Device:** {fault_summary.hostname}\n\n"
+                    #     formatted_output += f"**OS:** {fault_summary.operating_system}\n\n"
+                    #     formatted_output += f"**Severity:** {fault_summary.severity}\n\n"
+                    #     formatted_output += "---\n\n"
                     
-                    # Add action plan section
-                    if final_state.get("action_plan"):
-                        action_plan = final_state["action_plan"]
-                        formatted_output += f"## 🔍 Action Plan\n\n"
+                    # # Add action plan section
+                    # if final_state.get("action_plan"):
+                    #     action_plan = final_state["action_plan"]
+                    #     formatted_output += f"## 🔍 Action Plan\n\n"
                         
-                        for i, step in enumerate(action_plan, 1):
-                            approval_tag = "⚠️ **Requires Approval**" if step.requires_approval else "✅ **Safe to Execute**"
-                            formatted_output += f"### Step {i}: {step.description}\n\n"
-                            formatted_output += f"{approval_tag}\n\n"
-                            formatted_output += f"**Command:**\n```\n{step.command}\n```\n\n"
-                            formatted_output += f"**Expected Output:**\n{step.output_expectation}\n\n"
+                    #     for i, step in enumerate(action_plan, 1):
+                    #         approval_tag = "⚠️ **Requires Approval**" if step.requires_approval else "✅ **Safe to Execute**"
+                    #         formatted_output += f"### Step {i}: {step.description}\n\n"
+                    #         formatted_output += f"{approval_tag}\n\n"
+                    #         formatted_output += f"**Command:**\n```\n{step.command}\n```\n\n"
+                    #         formatted_output += f"**Expected Output:**\n{step.output_expectation}\n\n"
                             
-                            # Add execution result for completed steps
-                            current_step = final_state.get("current_step_index", 0)
-                            if i <= current_step and final_state.get("execution_result"):
-                                formatted_output += f"**Execution Result:**\n\n"
-                                execution_result = final_state["execution_result"]
+                    #         # Add execution result for completed steps
+                    #         current_step = final_state.get("current_step_index", 0)
+                    #         if i <= current_step and final_state.get("execution_result"):
+                    #             formatted_output += f"**Execution Result:**\n\n"
+                    #             execution_result = final_state["execution_result"]
                                 
-                                if i == current_step - 1:  # Most recent step
-                                    for cmd_output in execution_result.get("command_outputs", []):
-                                        formatted_output += f"Command: `{cmd_output['cmd']}`\n\n"
-                                        formatted_output += f"```\n{cmd_output['output']}\n```\n\n"
-                                else:
-                                    formatted_output += "Step executed.\n\n"
+                    #             if i == current_step - 1:  # Most recent step
+                    #                 for cmd_output in execution_result.get("command_outputs", []):
+                    #                     formatted_output += f"Command: `{cmd_output['cmd']}`\n\n"
+                    #                     formatted_output += f"```\n{cmd_output['output']}\n```\n\n"
+                    #             else:
+                    #                 formatted_output += "Step executed.\n\n"
                             
-                            formatted_output += "---\n\n"
+                    #         formatted_output += "---\n\n"
                     
-                    # Add analysis section
-                    if final_state.get("analysis_report"):
-                        analysis = final_state["analysis_report"]
-                        formatted_output += f"## 📊 Analysis Results\n\n"
+                    # # Add analysis section
+                    # if final_state.get("analysis_report"):
+                    #     analysis = final_state["analysis_report"]
+                    #     formatted_output += f"## 📊 Analysis Results\n\n"
                         
-                        # Key Findings
-                        formatted_output += "### Key Findings\n"
-                        for finding in analysis.key_findings:
-                            formatted_output += f"- {finding}\n"
-                        formatted_output += "\n"
+                    #     # Key Findings
+                    #     formatted_output += "### Key Findings\n"
+                    #     for finding in analysis.key_findings:
+                    #         formatted_output += f"- {finding}\n"
+                    #     formatted_output += "\n"
                         
-                        # Issues
-                        formatted_output += "### Issues Identified\n"
-                        if analysis.issues_identified:
-                            for issue in analysis.issues_identified:
-                                formatted_output += f"- {issue}\n"
-                        else:
-                            formatted_output += "- No issues identified\n"
-                        formatted_output += "\n"
+                    #     # Issues
+                    #     formatted_output += "### Issues Identified\n"
+                    #     if analysis.issues_identified:
+                    #         for issue in analysis.issues_identified:
+                    #             formatted_output += f"- {issue}\n"
+                    #     else:
+                    #         formatted_output += "- No issues identified\n"
+                    #     formatted_output += "\n"
                         
-                        # Recommendations
-                        formatted_output += "### Recommendations\n"
-                        for recommendation in analysis.recommendations:
-                            formatted_output += f"- {recommendation}\n"
-                        formatted_output += "\n"
+                    #     # Recommendations
+                    #     formatted_output += "### Recommendations\n"
+                    #     for recommendation in analysis.recommendations:
+                    #         formatted_output += f"- {recommendation}\n"
+                    #     formatted_output += "\n"
                         
-                        # Confidence level
-                        formatted_output += f"**Confidence Level:** {analysis.confidence_level}\n\n"
+                    #     # Confidence level
+                    #     formatted_output += f"**Confidence Level:** {analysis.confidence_level}\n\n"
                         
-                        formatted_output += "---\n\n"
+                    #     formatted_output += "---\n\n"
                     
-                    # Add status message
-                    if final_state.get("current_step_index", 0) >= len(final_state.get("action_plan", [])):
-                        formatted_output += "✅ **Workflow completed successfully**\n"
-                    else:
-                        formatted_output += "⏳ **Workflow in progress - provide additional input to continue**\n"
+                    # # Add status message
+                    # if final_state.get("current_step_index", 0) >= len(final_state.get("action_plan", [])):
+                    #     formatted_output += "✅ **Workflow completed successfully**\n"
+                    # else:
+                    #     formatted_output += "⏳ **Workflow in progress - provide additional input to continue**\n"
                     
-                    return formatted_output
+                    # return formatted_output
                 elif agent_type == "Fault Summarizer":
                     if debug_mode:
                         agent_logger.info("Running Fault Summarizer Agent", extra={"user_input": user_input})
@@ -457,15 +497,17 @@ if user_input:
             
             response = asyncio.run(get_response())
             
-            # If in debug mode and we have accumulated debug info, prepend it to the response
-            if debug_mode and st.session_state.current_response:
-                # Add a divider between debug logs and actual response
-                full_response = st.session_state.current_response + "\n\n---\n\n" + response
-                message_placeholder.markdown(full_response)
-                # Save the combined response
-                response = full_response
-            else:
-                message_placeholder.markdown(response)
+
+            # TODO: This still applies for running a single agent.  Or we just ebmed this within the agent...
+            # # If in debug mode and we have accumulated debug info, prepend it to the response
+            # if debug_mode and st.session_state.current_response:
+            #     # Add a divider between debug logs and actual response
+            #     full_response = st.session_state.current_response + "\n\n---\n\n" + response
+            #     message_placeholder.markdown(full_response)
+            #     # Save the combined response
+            #     response = full_response
+            # else:
+            #     message_placeholder.markdown(response)
             
             # Reset the current response accumulator
             st.session_state.current_response = None
