@@ -24,7 +24,7 @@ class FaultSummary(BaseModel):
 
 class FaultSummaryDependencies(BaseModel):
     """Dependencies for the Fault Summary agent."""
-    settings: Dict[str, bool] = {"debug_mode": False, "simulation_mode": True}
+    settings: Dict[str, Any] = {"debug_mode": False, "simulation_mode": True, "test_mode": False}
     logger: Optional[Any] = None
 
 # Initialize the Fault Summary agent with structured output

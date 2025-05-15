@@ -15,6 +15,8 @@ from datetime import datetime
 import os
 import logging
 import asyncio
+import yaml
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -49,16 +51,46 @@ class NetworkTroubleshootingState(TypedDict):
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
     device_credentials: Optional[DeviceCredentials]
-    settings: Dict[str, bool]
+    settings: Dict[str, Any]  # Contains simulation_mode, test_mode, test_name, etc.
+    test_data: Optional[Dict[str, Any]]  # Store loaded test data
+
+# Function to load test data
+def load_test_data(test_name: str) -> Dict[str, Any]:
+    """Load test data from a YAML file."""
+    try:
+        test_file = Path(f"tests/test_{test_name}.yml")
+        if not test_file.exists():
+            logger.warning(f"Test file {test_file} not found")
+            return {}
+        
+        with open(test_file, "r") as f:
+            test_data = yaml.safe_load(f)
+        
+        logger.info(f"Loaded test data for {test_name}")
+        return test_data
+    except Exception as e:
+        logger.error(f"Error loading test data: {e}")
+        return {}
 
 # Function to run the fault summary agent
 async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Run the fault summary agent to analyze and summarize a network fault."""
     logger.info("Running fault summary agent")
     
-    # Get the input text from the state
+    # Get the input text and settings from the state
     input_text = state["latest_user_message"]
     settings = state["settings"]
+    test_data = {}
+    
+    # Handle test mode - load test data if test_mode is enabled
+    if settings.get("test_mode", False):
+        test_name = settings.get("test_name", "")
+        if test_name:
+            test_data = load_test_data(test_name)
+            if test_data and "alert_payload" in test_data:
+                # Use the test alert payload as input instead of user message
+                input_text = test_data["alert_payload"]
+                logger.info(f"Using test alert payload from test_{test_name}.yml")
     
     # Create dependencies for the fault summary agent
     fault_summary_deps = FaultSummaryDependencies(
@@ -91,11 +123,12 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
         secret=os.getenv("DEVICE_SECRET")
     )
     
-    # Update the state with the fault summary
+    # Update the state with the fault summary and test data if available
     return {
         **state,
         "fault_summary": fault_summary,
-        "device_credentials": device_credentials
+        "device_credentials": device_credentials,
+        "test_data": test_data
     }
 
 # Function to run the action planner agent
@@ -155,6 +188,7 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     current_step_index = state["current_step_index"]
     device_credentials = state["device_credentials"]
     settings = state["settings"]
+    test_data = state.get("test_data", {})
     
     if not action_plan or current_step_index >= len(action_plan):
         logger.warning("No more steps to execute in the action plan")
@@ -162,6 +196,39 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     
     # Get the current step to execute
     current_step = action_plan[current_step_index]
+    
+    # Handle test mode - use command output from test data
+    if settings.get("test_mode", False) and test_data:
+        command = current_step.command
+        # Get command output from test data or use default message
+        command_output = test_data.get("commands", {}).get(command, "Output not available")
+        
+        # Create simulated result structure
+        simulated_output = [{"cmd": command, "output": command_output}]
+        
+        # Generate human-readable output with Markdown formatting
+        writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)} (Test Mode)
+
+**Command:** `{current_step.command}`
+
+### Output:
+```
+{command_output}
+```
+
+### Status:
+✅ **No errors encountered**
+""")
+        
+        # Update the state with the test execution result
+        return {
+            **state,
+            "execution_result": {
+                "command_outputs": simulated_output,
+                "simulation_mode": False,
+                "errors": []
+            }
+        }
     
     # Create dependencies for the action executor
     deps = ActionExecutorDeps(
@@ -188,11 +255,17 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
         errors_md = "✅ **No errors encountered**"
 
     # Generate human-readable output for the writer with Markdown formatting
+    mode_text = ""
+    if settings.get("simulation_mode", True):
+        mode_text = "**⚠️ SIMULATION MODE ⚠️**"
+    else:
+        mode_text = "**🔄 ACTUAL EXECUTION**"
+        
     writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)}
 
 **Command:** `{current_step.command}`
 
-{f'**⚠️ SIMULATION MODE ⚠️**' if settings.get("simulation_mode", True) else '**🔄 ACTUAL EXECUTION**'}
+{mode_text}
 
 ### Output:
 {command_outputs_md}

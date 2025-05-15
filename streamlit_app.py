@@ -1,7 +1,10 @@
 import streamlit as st
 import asyncio
 import os
-from typing import Dict
+import glob
+from pathlib import Path
+from typing import Dict, List
+import yaml
 from dotenv import load_dotenv
 from httpx import AsyncClient
 from datetime import datetime
@@ -34,6 +37,32 @@ from agents.action_analyzer.agent import ActionAnalyzerDependencies
 
 # Import the graph for the Multi-Agent workflow
 from graph import agentic_flow
+
+# Get available test scenarios from the tests directory
+def get_available_tests() -> List[str]:
+    """Get a list of available test scenarios from tests folder."""
+    test_files = glob.glob("tests/test_*.yml")
+    test_names = []
+    
+    for test_file in test_files:
+        # Extract test name from file path (test_name.yml -> name)
+        test_name = os.path.basename(test_file).replace("test_", "").replace(".yml", "")
+        test_names.append(test_name)
+    
+    return test_names
+
+# Load test file preview to show in UI
+def load_test_file_preview(test_name: str) -> str:
+    """Load and return the contents of a test file for preview."""
+    try:
+        test_file = Path(f"tests/test_{test_name}.yml")
+        if not test_file.exists():
+            return "Test file not found"
+        
+        with open(test_file, "r") as f:
+            return f.read()
+    except Exception as e:
+        return f"Error loading test file: {e}"
 
 # Set page configuration
 st.set_page_config(
@@ -80,7 +109,9 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
 if "settings" not in st.session_state:
     st.session_state.settings = {
         "simulation_mode": os.getenv("SIMULATION_MODE", "true").lower() == "true",
-        "debug_mode": os.getenv("DEBUG_MODE", "false").lower() == "false"
+        "debug_mode": os.getenv("DEBUG_MODE", "false").lower() == "false",
+        "test_mode": False,
+        "test_name": ""
     }
 
 # Add a title and description
@@ -99,9 +130,48 @@ with st.sidebar:
     simulation_mode = st.toggle("Simulation Mode", value=st.session_state.settings["simulation_mode"], help="Enable simulation mode to run commands without actual execution")
     debug_mode = st.toggle("Debug Mode", value=st.session_state.settings["debug_mode"], help="Enable debug mode for additional logging and information")
     
-    # Update session state when toggles change
-    st.session_state.settings["simulation_mode"] = simulation_mode
+    # Test mode toggle and test scenario selection
+    test_mode = st.toggle("Test Mode", value=st.session_state.settings["test_mode"], 
+                         help="Enable test mode to use predefined test data instead of real executions")
+    
+    # If test mode is enabled, show test scenario selection
+    if test_mode:
+        available_tests = get_available_tests()
+        
+        if available_tests:
+            test_name = st.selectbox(
+                "Select Test Scenario",
+                options=available_tests,
+                index=None,
+                placeholder="Choose a test scenario...",
+                help="Select a predefined test scenario to run"
+            )
+            
+            # # Show test file preview
+            # with st.expander("Test Scenario Preview"):
+            #     st.code(load_test_file_preview(test_name), language="yaml")
+        else:
+            st.warning("No test scenarios found. Create YAML files in the tests/ directory with the format test_name.yml")
+            test_name = ""
+            
+    else:
+        test_name = ""
+    
+    # Update session state with current settings
+    # When test_mode is enabled, disable simulation_mode automatically
+    st.session_state.settings["simulation_mode"] = simulation_mode and not test_mode
     st.session_state.settings["debug_mode"] = debug_mode
+    st.session_state.settings["test_mode"] = test_mode
+    st.session_state.settings["test_name"] = test_name
+    
+    # Show current mode status
+    st.divider()
+    if st.session_state.settings["test_mode"]:
+        st.info(f"Running in TEST MODE with scenario: {test_name or 'None selected'}")
+    elif st.session_state.settings["simulation_mode"]:
+        st.info("Running in SIMULATION MODE")
+    else:
+        st.warning("Running in PRODUCTION MODE - Commands will execute on real devices")
     
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
