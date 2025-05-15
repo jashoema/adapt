@@ -7,8 +7,11 @@ from httpx import AsyncClient
 
 # Import agents from their respective packages
 from agents.hello_world import run as run_hello_world
-from agents.fault_summary import run as run_fault_summary, NetworkFaultSummary
+from agents.hello_world.agent import HelloWorldDependencies
+from agents.fault_summary import run as run_fault_summary
+from agents.fault_summary.agent import FaultSummary, FaultSummaryDependencies
 from agents.action_planner import run as run_action_planner
+from agents.action_planner.agent import ActionPlannerDependencies, TroubleshootingStep
 from agents.action_executor import run as run_action_executor
 from agents.action_executor.agent import DeviceCredentials, ActionExecutorDeps
 
@@ -20,6 +23,12 @@ async def main():
     Run a simple main loop for the agents.
     Prompts the user and prints the agent's response.
     """
+    # Initialize settings
+    settings = {
+        "simulation_mode": os.getenv("SIMULATION_MODE", "true").lower() == "true",
+        "debug_mode": os.getenv("DEBUG_MODE", "false").lower() == "true"
+    }
+    
     print("Select an agent to use:")
     print("1. Hello World Agent")
     print("2. Network Fault Summarization Agent")
@@ -30,12 +39,24 @@ async def main():
     
     if choice == "1":
         user_input = input("You: ")
-        result = await run_hello_world(user_input)
+        
+        # Create dependencies for the hello world agent
+        hello_world_deps = HelloWorldDependencies(
+            settings=settings
+        )
+        
+        result = await run_hello_world(user_input, deps=hello_world_deps)
         print("Agent:", result.output)  # result.output is the agent's reply
     elif choice == "2":
         print("Describe the network fault alert:")
         user_input = input("You: ")
-        result = await run_fault_summary(user_input)
+        
+        # Create dependencies for the fault summary agent
+        fault_summary_deps = FaultSummaryDependencies(
+            settings=settings
+        )
+        
+        result = await run_fault_summary(user_input, deps=fault_summary_deps)
         
         # Pretty print the structured output
         fault_summary = result.output
@@ -53,7 +74,20 @@ async def main():
     elif choice == "3":
         print("Describe the network fault for troubleshooting:")
         user_input = input("You: ")
-        result = await run_action_planner(user_input)
+        
+        # Create a new FaultSummary with the user input as the summary
+        network_fault_summary = FaultSummary(
+            summary=user_input,
+            original_alert_details={"source": "user_input", "raw_text": user_input}
+        )
+        
+        # Create dependencies for the action planner
+        action_planner_deps = ActionPlannerDependencies(
+            fault_summary=network_fault_summary,
+            settings=settings
+        )
+        
+        result = await run_action_planner(user_input, deps=action_planner_deps)
         
         # Pretty print the troubleshooting steps
         troubleshooting_steps = result.output
@@ -111,32 +145,43 @@ async def main():
             secret=os.getenv("DEVICE_SECRET", None)
         )
         
+        # Create a dummy TroubleshootingStep for execution
+        action = TroubleshootingStep(
+            description="Execute CLI command",
+            command="\n".join(commands),
+            output_expectation="Command should execute successfully",
+            requires_approval=False
+        )
+        
+        # Create dependencies with settings included
         deps = ActionExecutorDeps(
+            current_action=action,
             simulation_mode=simulation_mode,
             device=device_credentials,
-            client=AsyncClient()
+            client=AsyncClient(),
+            settings=settings
         )
         
         # Execute the command using action_executor agent
         print("\nExecuting command...")
-        result = await run_action_executor(deps=deps, commands=commands)
+        result = await run_action_executor(deps=deps)
         
         # Format and display the output based on the updated ActionExecutorOutput structure
         print("\nCommand Execution Result:")
         print("=" * 60)
-        print(f"Simulation Mode: {'✅ Yes' if result.simulation_mode else '❌ No'}")
+        print(f"Simulation Mode: {'✅ Yes' if result.output.simulation_mode else '❌ No'}")
         
         print("\nCommand Outputs:")
         print("-" * 60)
-        for cmd_output in result.command_outputs:
+        for cmd_output in result.output.command_outputs:
             print(f"Command: {cmd_output['cmd']}")
             print(f"Output:\n{cmd_output['output']}")
             print("-" * 40)
         
-        if result.errors and len(result.errors) > 0:
+        if result.output.errors and len(result.output.errors) > 0:
             print("\nErrors:")
             print("-" * 60)
-            for error in result.errors:
+            for error in result.output.errors:
                 print(f"- {error}")
         
         print("=" * 60)

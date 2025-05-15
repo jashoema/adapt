@@ -1,6 +1,7 @@
 import streamlit as st
 import asyncio
 import os
+from typing import Dict
 from dotenv import load_dotenv
 from httpx import AsyncClient
 from datetime import datetime
@@ -20,7 +21,9 @@ load_dotenv()
 
 # Import agents from their respective packages
 from agents.hello_world import run as run_hello_world
+from agents.hello_world.agent import HelloWorldDependencies
 from agents.fault_summary import run as run_fault_summary
+from agents.fault_summary.agent import FaultSummaryDependencies
 from agents.action_planner import run as run_action_planner
 from agents.action_executor import run as run_action_executor
 from agents.action_analyzer import run as run_action_analyzer
@@ -46,11 +49,14 @@ def get_thread_id():
 
 thread_id = get_thread_id()
 
-async def run_agent_with_streaming(user_input: str, simulation_mode: bool = True):
+async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = None):
     """
     Run the agent with streaming text for the user_input prompt,
     while maintaining the entire conversation in `st.session_state.messages`.
     """
+    if settings is None:
+        settings = {"simulation_mode": True, "debug_mode": False}
+        
     config = {
         "configurable": {
             "thread_id": thread_id
@@ -60,7 +66,7 @@ async def run_agent_with_streaming(user_input: str, simulation_mode: bool = True
     # First message from user
     if len(st.session_state.messages) == 1:
         async for msg in agentic_flow.astream(
-                {"latest_user_message": user_input, "simulation_mode": simulation_mode}, config, stream_mode="custom"
+                {"latest_user_message": user_input, "settings": settings}, config, stream_mode="custom"
             ):
                 yield msg
     # Continue the conversation
@@ -70,11 +76,12 @@ async def run_agent_with_streaming(user_input: str, simulation_mode: bool = True
         ):
             yield msg
 
-# Initialize agent dependencies
-if "simulation_mode" not in st.session_state:
-    st.session_state.simulation_mode = os.getenv("SIMULATION_MODE", "true").lower() == "true"
-if "debug_mode" not in st.session_state:
-    st.session_state.debug_mode = os.getenv("DEBUG_MODE", "false").lower() == "false"
+# Initialize settings in session state
+if "settings" not in st.session_state:
+    st.session_state.settings = {
+        "simulation_mode": os.getenv("SIMULATION_MODE", "true").lower() == "true",
+        "debug_mode": os.getenv("DEBUG_MODE", "false").lower() == "false"
+    }
 
 # Add a title and description
 st.title("🤖 AI Agents Dashboard")
@@ -87,14 +94,14 @@ with st.sidebar:
         ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor", "Action Analyzer", "Multi-Agent"]
     )
     
-    # Add toggles for simulation_mode and debug_mode
+    # Add toggles for settings
     st.header("Settings")
-    simulation_mode = st.toggle("Simulation Mode", value=st.session_state.simulation_mode, help="Enable simulation mode to run commands without actual execution")
-    debug_mode = st.toggle("Debug Mode", value=st.session_state.debug_mode, help="Enable debug mode for additional logging and information")
+    simulation_mode = st.toggle("Simulation Mode", value=st.session_state.settings["simulation_mode"], help="Enable simulation mode to run commands without actual execution")
+    debug_mode = st.toggle("Debug Mode", value=st.session_state.settings["debug_mode"], help="Enable debug mode for additional logging and information")
     
     # Update session state when toggles change
-    st.session_state.simulation_mode = simulation_mode
-    st.session_state.debug_mode = debug_mode
+    st.session_state.settings["simulation_mode"] = simulation_mode
+    st.session_state.settings["debug_mode"] = debug_mode
     
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
@@ -118,7 +125,7 @@ elif agent_type == "Multi-Agent":
     st.markdown("2. 🔍 **Action Planning**: Create a troubleshooting plan with specific steps")
     st.markdown("3. 🖥️ **Action Execution**: Execute each step of the plan")
     st.markdown("4. 📊 **Action Analysis**: Analyze the output of each step")
-    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.simulation_mode else "REAL EXECUTION mode via SSH"))
+    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
     
     # Add device info display for Multi-Agent as well
     device_info = {
@@ -132,7 +139,7 @@ elif agent_type == "Multi-Agent":
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
-    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.simulation_mode else "REAL EXECUTION mode via SSH"))
+    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
     # Add device info display
     device_info = {
         "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
@@ -185,18 +192,24 @@ if user_input:
                 # Initialize empty response for debug messages to append to
                 st.session_state.current_response = ""
                 
-                if debug_mode:
+                if st.session_state.settings["debug_mode"]:
                     logger.info(f"Processing input with {agent_type}", extra={"user_input": user_input})
                 
                 if agent_type == "Hello World Agent":
-                    if debug_mode:
+                    if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Hello World Agent", extra={"user_input": user_input})
                     
-                    # Pass debug_mode and logger to the agent
-                    result = await run_hello_world(user_input, debug_mode=debug_mode, logger=agent_logger)
+                    # Create dependencies for the Hello World agent
+                    hello_world_deps = HelloWorldDependencies(
+                        settings=st.session_state.settings,
+                        logger=agent_logger
+                    )
+                    
+                    # Pass the dependencies to the agent
+                    result = await run_hello_world(user_input, deps=hello_world_deps)
                     return result.output
                 elif agent_type == "Multi-Agent":
-                    if debug_mode:
+                    if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Multi-Agent Workflow", extra={"user_input": user_input})
                     
                     # Create device credentials from environment variables
@@ -204,105 +217,24 @@ if user_input:
                     device_type = os.getenv("DEVICE_TYPE", "cisco_ios")
                     
                     response_content = ""
-                    async for chunk in run_agent_with_streaming(user_input):
+                    async for chunk in run_agent_with_streaming(user_input, settings=st.session_state.settings):
                         response_content += chunk
                         # Update the placeholder with the current response content
                         message_placeholder.markdown(response_content)
 
                     return response_content
-                    # # Run the entire workflow using the graph module
-                    # final_state = await run_graph(
-                    #     input_text=user_input,
-                    #     device_hostname=device_hostname,
-                    #     device_type=device_type,
-                    #     simulation_mode=st.session_state.simulation_mode
-                    # )
-                    
-                    # # Format the output from the workflow for display
-                    # formatted_output = "### 🔄 Multi-Agent Network Troubleshooting Results\n\n"
-                    
-                    # # Add fault summary section
-                    # if final_state.get("fault_summary"):
-                    #     fault_summary = final_state["fault_summary"]
-                    #     formatted_output += f"## 🔧 Fault Summary\n\n"
-                    #     formatted_output += f"**Title:** {fault_summary.title}\n\n"
-                    #     formatted_output += f"**Summary:** {fault_summary.summary}\n\n"
-                    #     formatted_output += f"**Device:** {fault_summary.hostname}\n\n"
-                    #     formatted_output += f"**OS:** {fault_summary.operating_system}\n\n"
-                    #     formatted_output += f"**Severity:** {fault_summary.severity}\n\n"
-                    #     formatted_output += "---\n\n"
-                    
-                    # # Add action plan section
-                    # if final_state.get("action_plan"):
-                    #     action_plan = final_state["action_plan"]
-                    #     formatted_output += f"## 🔍 Action Plan\n\n"
-                        
-                    #     for i, step in enumerate(action_plan, 1):
-                    #         approval_tag = "⚠️ **Requires Approval**" if step.requires_approval else "✅ **Safe to Execute**"
-                    #         formatted_output += f"### Step {i}: {step.description}\n\n"
-                    #         formatted_output += f"{approval_tag}\n\n"
-                    #         formatted_output += f"**Command:**\n```\n{step.command}\n```\n\n"
-                    #         formatted_output += f"**Expected Output:**\n{step.output_expectation}\n\n"
-                            
-                    #         # Add execution result for completed steps
-                    #         current_step = final_state.get("current_step_index", 0)
-                    #         if i <= current_step and final_state.get("execution_result"):
-                    #             formatted_output += f"**Execution Result:**\n\n"
-                    #             execution_result = final_state["execution_result"]
-                                
-                    #             if i == current_step - 1:  # Most recent step
-                    #                 for cmd_output in execution_result.get("command_outputs", []):
-                    #                     formatted_output += f"Command: `{cmd_output['cmd']}`\n\n"
-                    #                     formatted_output += f"```\n{cmd_output['output']}\n```\n\n"
-                    #             else:
-                    #                 formatted_output += "Step executed.\n\n"
-                            
-                    #         formatted_output += "---\n\n"
-                    
-                    # # Add analysis section
-                    # if final_state.get("analysis_report"):
-                    #     analysis = final_state["analysis_report"]
-                    #     formatted_output += f"## 📊 Analysis Results\n\n"
-                        
-                    #     # Key Findings
-                    #     formatted_output += "### Key Findings\n"
-                    #     for finding in analysis.key_findings:
-                    #         formatted_output += f"- {finding}\n"
-                    #     formatted_output += "\n"
-                        
-                    #     # Issues
-                    #     formatted_output += "### Issues Identified\n"
-                    #     if analysis.issues_identified:
-                    #         for issue in analysis.issues_identified:
-                    #             formatted_output += f"- {issue}\n"
-                    #     else:
-                    #         formatted_output += "- No issues identified\n"
-                    #     formatted_output += "\n"
-                        
-                    #     # Recommendations
-                    #     formatted_output += "### Recommendations\n"
-                    #     for recommendation in analysis.recommendations:
-                    #         formatted_output += f"- {recommendation}\n"
-                    #     formatted_output += "\n"
-                        
-                    #     # Confidence level
-                    #     formatted_output += f"**Confidence Level:** {analysis.confidence_level}\n\n"
-                        
-                    #     formatted_output += "---\n\n"
-                    
-                    # # Add status message
-                    # if final_state.get("current_step_index", 0) >= len(final_state.get("action_plan", [])):
-                    #     formatted_output += "✅ **Workflow completed successfully**\n"
-                    # else:
-                    #     formatted_output += "⏳ **Workflow in progress - provide additional input to continue**\n"
-                    
-                    # return formatted_output
                 elif agent_type == "Fault Summarizer":
-                    if debug_mode:
+                    if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Fault Summarizer Agent", extra={"user_input": user_input})
                     
-                    # Pass debug_mode and logger to the agent
-                    result = await run_fault_summary(user_input, debug_mode=debug_mode, logger=agent_logger)
+                    # Create dependencies for the Fault Summarizer agent
+                    fault_summary_deps = FaultSummaryDependencies(
+                        settings=st.session_state.settings,
+                        logger=agent_logger
+                    )
+                    
+                    # Pass dependencies to the agent
+                    result = await run_fault_summary(user_input, deps=fault_summary_deps)
                     # Format structured output for display
                     fault_summary = result.output
                     formatted_output = f"""
@@ -329,7 +261,7 @@ if user_input:
                     """
                     return formatted_output
                 elif agent_type == "Network Troubleshooting Planner":
-                    if debug_mode:
+                    if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Network Troubleshooting Planner Agent", extra={"user_input": user_input})
                     
                     # Create a new FaultSummary with the user input as the summary
@@ -340,10 +272,14 @@ if user_input:
                     )
                     
                     # Create the dependency object
-                    action_planner_deps = ActionPlannerDependencies(fault_summary=network_fault_summary)
+                    action_planner_deps = ActionPlannerDependencies(
+                        fault_summary=network_fault_summary,
+                        settings=st.session_state.settings,
+                        logger=agent_logger
+                    )
                     
                     # Call the action planner with the dependencies
-                    result = await run_action_planner(user_input, deps=action_planner_deps, debug_mode=debug_mode, logger=agent_logger)
+                    result = await run_action_planner(user_input, deps=action_planner_deps)
                     action_plan = result.output
                     
                     # Format the troubleshooting steps for display
@@ -359,7 +295,7 @@ if user_input:
                     
                     return formatted_output
                 elif agent_type == "Action Analyzer":
-                    if debug_mode:
+                    if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Action Analyzer Agent", extra={"user_input": user_input})
                     
                     # For demonstration purposes, use a sample output and dependencies
@@ -400,11 +336,13 @@ if user_input:
                         executor_output=executor_output,
                         action_plan=[action],
                         fault_summary=network_fault_summary,
-                        current_step=action
+                        current_step=action,
+                        settings=st.session_state.settings,
+                        logger=agent_logger
                     )
                     
-                    # Call the action analyzer with the user input and dependencies
-                    result = await run_action_analyzer(deps=action_analyzer_deps, debug_mode=debug_mode, logger=agent_logger)
+                    # Call the action analyzer with dependencies
+                    result = await run_action_analyzer(deps=action_analyzer_deps)
                     analysis_report = result.output
                     
                     # Format the analysis report for display
@@ -433,7 +371,7 @@ if user_input:
                     
                     return formatted_output
                 else:  # Command Executor
-                    if debug_mode:
+                    if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Command Executor Agent", extra={"user_input": user_input})
                     
                     # Create device credentials from environment variables
@@ -456,16 +394,16 @@ if user_input:
                     # Create dependencies for the action executor
                     action_executor_deps = ActionExecutorDeps(
                         current_action=action,
-                        simulation_mode=st.session_state.simulation_mode,
+                        simulation_mode=st.session_state.settings["simulation_mode"],
                         device=device_credentials,
-                        client=AsyncClient()
+                        client=AsyncClient(),
+                        settings=st.session_state.settings,
+                        logger=agent_logger
                     )
                     
                     # Execute the commands using the action_executor agent
-                    result = await run_action_executor(
-                        deps=action_executor_deps, debug_mode=debug_mode, logger=agent_logger
-                    )
-
+                    result = await run_action_executor(deps=action_executor_deps)
+                    
                     result_command_outputs = getattr(result.output,"command_outputs", [{"cmd": "No output", "output": "No output"}])
                     result_simulation_mode = getattr(result.output,"simulation_mode", True)
                     result_errors = getattr(result.output,"errors", [])
@@ -496,18 +434,6 @@ if user_input:
                     return formatted_output
             
             response = asyncio.run(get_response())
-            
-
-            # TODO: This still applies for running a single agent.  Or we just ebmed this within the agent...
-            # # If in debug mode and we have accumulated debug info, prepend it to the response
-            # if debug_mode and st.session_state.current_response:
-            #     # Add a divider between debug logs and actual response
-            #     full_response = st.session_state.current_response + "\n\n---\n\n" + response
-            #     message_placeholder.markdown(full_response)
-            #     # Save the combined response
-            #     response = full_response
-            # else:
-            #     message_placeholder.markdown(response)
             
             # Reset the current response accumulator
             st.session_state.current_response = None

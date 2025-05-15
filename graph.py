@@ -23,7 +23,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from httpx import AsyncClient
 
 # Import agents
-from agents.fault_summary import run as run_fault_summary, FaultSummary
+from agents.fault_summary import run as run_fault_summary, FaultSummary, FaultSummaryDependencies
 from agents.action_planner import run as run_action_planner, TroubleshootingStep, ActionPlannerDependencies
 from agents.action_executor import run as run_action_executor, DeviceCredentials, ActionExecutorDeps
 from agents.action_analyzer import run as run_action_analyzer, ActionAnalysisReport, ActionAnalyzerDependencies
@@ -49,7 +49,7 @@ class NetworkTroubleshootingState(TypedDict):
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
     device_credentials: Optional[DeviceCredentials]
-    simulation_mode: bool
+    settings: Dict[str, bool]
 
 # Function to run the fault summary agent
 async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
@@ -58,9 +58,16 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     
     # Get the input text from the state
     input_text = state["latest_user_message"]
+    settings = state["settings"]
     
-    # Run the fault summary agent
-    result = await run_fault_summary(input_text)
+    # Create dependencies for the fault summary agent
+    fault_summary_deps = FaultSummaryDependencies(
+        settings=settings,
+        logger=logger
+    )
+    
+    # Run the fault summary agent with dependencies
+    result = await run_fault_summary(input_text, deps=fault_summary_deps)
     fault_summary = result.output
 
     # Generate human-readable output for the writer based on FaultSummary class structure with Markdown formatting
@@ -98,15 +105,20 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     
     # Get the fault summary from the state
     fault_summary = state["fault_summary"]
+    settings = state["settings"]
     
     if not fault_summary:
         logger.warning("No fault summary found in state")
         return state
     
     # Create dependencies for the action planner
-    deps = ActionPlannerDependencies(fault_summary=fault_summary)
+    deps = ActionPlannerDependencies(
+        fault_summary=fault_summary,
+        settings=settings,
+        logger=logger
+    )
     
-    # Run the action planner agent with the fault summary
+    # Run the action planner agent with the dependencies
     result = await run_action_planner("", deps=deps)
     action_plan = result.output
 
@@ -142,7 +154,7 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     action_plan = state["action_plan"]
     current_step_index = state["current_step_index"]
     device_credentials = state["device_credentials"]
-    simulation_mode = state["simulation_mode"]
+    settings = state["settings"]
     
     if not action_plan or current_step_index >= len(action_plan):
         logger.warning("No more steps to execute in the action plan")
@@ -154,9 +166,10 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     # Create dependencies for the action executor
     deps = ActionExecutorDeps(
         current_action=current_step,
-        simulation_mode=simulation_mode,
+        settings=settings,
         device=device_credentials,
-        client=AsyncClient()
+        client=AsyncClient(),
+        logger=logger
     )
     
     # Run the action executor agent for the current step
@@ -165,7 +178,7 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     # Format the command outputs and errors with Markdown
     command_outputs_md = ""
     for output in result.output.command_outputs:
-        command_outputs_md += f"```\n{output["output"]}\n```\n"
+        command_outputs_md += f"```\n{output['output']}\n```\n"
     
     errors_md = ""
     if result.output.errors:
@@ -179,7 +192,7 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
 
 **Command:** `{current_step.command}`
 
-{f'**⚠️ SIMULATION MODE ⚠️**' if simulation_mode else '**🔄 ACTUAL EXECUTION**'}
+{f'**⚠️ SIMULATION MODE ⚠️**' if settings.get("simulation_mode", True) else '**🔄 ACTUAL EXECUTION**'}
 
 ### Output:
 {command_outputs_md}
@@ -208,6 +221,7 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
     current_step_index = state["current_step_index"]
     execution_result = state["execution_result"]
     fault_summary = state["fault_summary"]
+    settings = state["settings"]
     
     if not action_plan or not execution_result:
         logger.warning("Missing action plan or execution result in state")
@@ -228,7 +242,9 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
         executor_output=executor_output,
         action_plan=action_plan,
         fault_summary=fault_summary,
-        current_step=current_step
+        current_step=current_step,
+        settings=settings,
+        logger=logger
     )
     
     # Run the action analyzer agent

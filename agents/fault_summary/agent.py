@@ -22,6 +22,11 @@ class FaultSummary(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="Timestamp when the alert occurred")
     original_alert_details: Dict[str, Any] = Field(default_factory=lambda: {"source": "manual", "details": "No details provided"}, description="Original alert details in JSON format")
 
+class FaultSummaryDependencies(BaseModel):
+    """Dependencies for the Fault Summary agent."""
+    settings: Dict[str, bool] = {"debug_mode": False, "simulation_mode": True}
+    logger: Optional[Any] = None
+
 # Initialize the Fault Summary agent with structured output
 agent = Agent(
     model='openai:gpt-4o',
@@ -31,23 +36,26 @@ agent = Agent(
     instrument=True,
 )
 
-async def run(user_input: str, debug_mode: bool = False, logger: Optional[Any] = None):
+async def run(user_input: str, deps: Optional[FaultSummaryDependencies] = None):
     """
     Run the fault summary agent with the given user input.
     
     Args:
-        user_input: The user's description of the network fault
-        debug_mode: Whether to log detailed debugging information
-        logger: Optional logger instance to use for logging
+        user_input: The user input describing the network fault alert
+        deps: Dependencies for the agent, including settings, logger, and latest_user_message
         
     Returns:
         The agent's response object containing the structured NetworkFaultSummary
     """
+    # Initialize dependencies if None
+    if deps is None:
+        deps = FaultSummaryDependencies()
+    
     # Log debug information if debug mode is enabled
-    if debug_mode and logger:
-        logger.info("Fault Summary Agent System Prompt", extra={
+    if deps.settings.get("debug_mode", False) and deps.logger:
+        deps.logger.info("Fault Summary Agent System Prompt", extra={
             "system_prompt": FAULT_SUMMARY_SYSTEM_PROMPT,
             "user_input": user_input
         })
         
-    return await agent.run(user_input)
+    return await agent.run(user_input, deps=deps)

@@ -13,7 +13,8 @@ class StreamlitLogger(logging.Logger):
     
     def _log_to_streamlit(self, level: int, msg: str, *args, **kwargs):
         # Only log if we're in debug mode
-        if not st.session_state.get("debug_mode", False):
+        settings = st.session_state.get("settings", {"debug_mode": False})
+        if not settings.get("debug_mode", False):
             return
             
         # Format the message if args are provided

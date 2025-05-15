@@ -49,12 +49,11 @@ class ActionExecutorOutput:
 @dataclass
 class ActionExecutorDeps:
     current_action: TroubleshootingStep
-    simulation_mode: bool
     device: DeviceCredentials
     client: AsyncClient  # For Pydantic AI usage, potential future tool integration
-    debug_mode: bool = False
+    settings: Dict[str, bool] = None
     logger: Optional[Any] = None
-
+    
 # Main Agent
 action_executor = Agent(
     "openai:gpt-4o",
@@ -68,36 +67,33 @@ action_executor = Agent(
     instrument=True
 )
 
-async def run(deps: ActionExecutorDeps, debug_mode: bool = False, logger: Optional[Any] = None) -> RunContext:
+async def run(deps: ActionExecutorDeps) -> RunContext:
     """
     Main agent logic for executing network commands.
 
     Args:
-        deps: The dependencies containing simulation mode and device info.
-        debug_mode: Whether to log detailed debugging information
-        logger: Optional logger instance to use for logging
+        deps: The dependencies containing simulation mode, device info, settings, and logger
 
     Returns:
         Execution output and status.
     """
-    # Update debug_mode and logger in dependencies if provided
-    if debug_mode and logger:
-        deps.debug_mode = debug_mode
-        deps.logger = logger
-        
-        # Log debug information
-        logger.info("Action Executor Agent System Prompt", extra={
+    # Initialize settings if None in dependencies
+    if deps.settings is None:
+        deps.settings = {"debug_mode": False, "simulation_mode": True}
+    
+    # Log debug information if debug mode is enabled
+    if deps.settings.get("debug_mode", False) and deps.logger:
+        deps.logger.info("Action Executor Agent System Prompt", extra={
             "system_prompt": SYSTEM_PROMPT,
             "task_prompt": TASK_PROMPT
         })
     
-    simulation = deps.simulation_mode
+    simulation = deps.settings.get("simulation_mode", True)
     device = deps.device.__dict__
     commands = deps.current_action.command.splitlines()  # Split user input into multiple commands
 
     for command in commands:
-        
-        if deps.debug_mode and deps.logger:
+        if deps.settings.get("debug_mode", False) and deps.logger:
             deps.logger.info(f"Executing command", extra={
                 "command": command,
                 "simulation_mode": simulation,
@@ -121,7 +117,7 @@ async def run(deps: ActionExecutorDeps, debug_mode: bool = False, logger: Option
     If simulation_mode is FALSE, you should use the appropriate tool to execute commands on the real device.
     """
     
-    if deps.debug_mode and deps.logger:
+    if deps.settings.get("debug_mode", False) and deps.logger:
         deps.logger.info("User prompt for Action Executor", extra={
             "user_prompt": user_prompt
         })
