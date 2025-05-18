@@ -16,3 +16,71 @@
     "raw_event": "%ROUTING-4-RT_TABLE_OVERFLOW : Default VRF has exceeded the maximum routing table size limit (current: 1100000, threshold: 1000000)"
   }
 }
+
+Fault Summary: 
+
+{
+  "title": "Routing Table Limit Exceeded",
+  "summary": "Router has exceeded its maximum routing table capacity, which may lead to network instability or routing failures.",
+  "hostname": "router1.siteA.example.com",
+  "severity": "Critical",
+  "timestamp": "2025-05-12T08:15:30Z",
+  "metadata": {
+    "vrf_name": "Default",
+    "table_size_current": 1100000,
+    "table_size_threshold": 1000000,
+    "overflow_amount": 100000,
+    "overflow_percentage": 10.0,
+    "ip_address": "192.0.2.10",
+    "device_platform": "ASR9906",
+    "log_level": 4,
+    "log_facility": "ROUTING"
+  }
+}
+
+Device Facts:
+
+{
+    'hostname': 'router1.siteA.example.com',
+    'fqdn': 'router1.siteA.example.com',
+    'vendor': 'Cisco',
+    'model': 'ASR9906',
+    'os_version': '7.8.2',
+    'serial_number': 'FXS1234ABC',  
+    'uptime': 2345678,              
+    'interface_list': ['GigabitEthernet0/0/0/0', 'GigabitEthernet0/0/0/1', 'MgmtEth0/RP0/CPU0/0']
+}
+
+Custom Troubleshooting Guide:
+
+1. Confirm the problem
+Run: show route summary
+Look for the total number of routes and see if it exceeds the threshold.
+Also check:
+show cef summary
+This shows how many entries are programmed in the forwarding table.
+
+2. If the issue is still present, clear the routing table 
+Run: clear bgp all
+
+3. Apply a config change to limit max prefixes
+
+router bgp <ASN>
+  neighbor <IP> maximum-prefix 500000 restart 5
+
+4. Verify resolution
+Run: show route summary and show logging
+Verify that we're below the route threshold and no longer seeing the table overflow syslog messages
+
+Troubleshooting Step:
+
+{
+  "description": "Check current routing table size to confirm the overflow condition",
+  "action_type": "diagnostic",
+  "commands": [
+    "show route summary",
+    "show cef summary"
+  ],
+  "output_expectation": "Verify that the total routes exceed the threshold of 1000000. The output will show the current routing table size matching or exceeding the reported value of 1100000 routes in the Default VRF.",
+  "requires_approval": false
+}

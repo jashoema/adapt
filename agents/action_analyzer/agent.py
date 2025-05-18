@@ -12,6 +12,7 @@ from ..action_planner.agent import TroubleshootingStep
 from ..fault_summary.agent import FaultSummary
 
 # Output schema to structure the agent's analysis.
+@dataclass
 class ActionAnalysisReport(BaseModel):
     """Structured analysis report for network device command output."""
 

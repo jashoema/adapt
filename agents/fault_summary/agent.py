@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 from typing import Literal, Dict, Any, Optional
 from pydantic_ai import Agent
 from datetime import datetime
+from dataclasses import dataclass
+
 
 from .agent_prompts import FAULT_SUMMARY_SYSTEM_PROMPT
 
@@ -12,6 +14,7 @@ from .agent_prompts import FAULT_SUMMARY_SYSTEM_PROMPT
 load_dotenv()
 
 # Structured output schema for fault summarization
+@dataclass
 class FaultSummary(BaseModel):
     """Structured summary of a diagnosed network fault alert."""
     title: str = Field(default="Default Title", description="A concise title for the network alert")

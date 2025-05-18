@@ -27,6 +27,7 @@ class ActionPlannerDependencies:
     settings: Dict[str, bool] = None
     logger: Optional[Any] = None
     
+@dataclass
 class TroubleshootingStep(BaseModel):
     """
     Represents a single diagnostic step in a network troubleshooting plan.

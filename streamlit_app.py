@@ -292,6 +292,13 @@ if user_input:
                         # Update the placeholder with the current response content
                         message_placeholder.markdown(response_content)
 
+                    # Log the response to a file
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    workbench_path = os.path.join("workbench", f"responses_{timestamp}.md")
+                    os.makedirs("workbench", exist_ok=True)
+                    with open(workbench_path, "w", encoding="utf-8") as f:
+                        f.write(response_content)
+
                     return response_content
                 elif agent_type == "Fault Summarizer":
                     if st.session_state.settings["debug_mode"]:
