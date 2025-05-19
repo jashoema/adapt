@@ -314,6 +314,8 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     return {
         **state,
         "action_plan": action_plan,
+        "action_plan_remaining": action_plan,
+        "action_plan_history": [],
         "current_step_index": 0
     }
 
@@ -431,7 +433,7 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
             )
     
     # 9. No approval required, proceed to executor
-    writer("✅ **No approval required. Proceeding to execution.**")
+    writer("\n\n✅ **No approval required. Proceeding to execution.**\n\n")
     return Command(
         update={
             "action_plan_history": action_plan_history,
@@ -446,18 +448,18 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     logger.info("Running action executor agent")
     
     # Get the action plan and current step index from the state
-    action_plan = state["action_plan"]
-    current_step_index = state["current_step_index"]
-    device_credentials = state["device_credentials"]
+    action_plan_remaining = state["action_plan_remaining"]
+    device_driver = state["device_driver"]
+    device_facts = state["device_facts"]
     settings = state["settings"]
     test_data = state.get("test_data", {})
     
-    if not action_plan or current_step_index >= len(action_plan):
-        logger.warning("No more steps to execute in the action plan")
-        return state
+    # if not action_plan or current_step_index >= len(action_plan):
+    #     logger.warning("No more steps to execute in the action plan")
+    #     return state
     
     # Get the current step to execute
-    current_step = action_plan[current_step_index]
+    current_step = action_plan_remaining[0]
     
     # Handle test mode - use command output from test data
     if settings.get("test_mode", False) and test_data:
@@ -471,24 +473,32 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
             command_output = test_data.get("commands", {}).get(command, "Output not available")
             simulated_output.append({"cmd": command, "output": command_output})
 
+        description = current_step.description
         command_outputs = simulated_output
         errors = []
+        execution_result = {
+            "description": description,
+            "command_outputs": command_outputs,
+            "errors": errors
+        }
         
     else: 
         # Create dependencies for the action executor
         deps = ActionExecutorDeps(
-            current_action=current_step,
+            current_step=current_step,
+            device_driver=device_driver,
+            device_facts=device_facts,
             settings=settings,
-            device=device_credentials,
-            client=AsyncClient(),
             logger=logger
         )
         
         # Run the action executor agent for the current step
         result = await run_action_executor(deps=deps)
 
-        command_outputs = result.output.command_outputs
-        errors = result.output.errors
+        execution_result = result.output
+        description = execution_result.description
+        command_outputs = execution_result.command_outputs
+        errors = execution_result.errors
 
     
     
@@ -517,7 +527,10 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     else:
         mode_text = "**🔄 ACTUAL EXECUTION**"
         
-    writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)}
+    writer(f"""## 🔧 Executing Action
+
+**Description:** 
+{description}
 
 **Commands:** 
 {commands_md}
@@ -527,18 +540,16 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
 ### Output:
 {command_outputs_md}
 
-### Status:
+### Status: 
 {errors_md}
 """)
     
     # Update the state with the execution result
     return {
         **state,
-        "execution_result": {
-            "command_outputs": command_outputs,
-            "errors": errors
-        }
+        "execution_result": execution_result
     }
+
 
 # Function to run the action analyzer agent
 async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
