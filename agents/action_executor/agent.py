@@ -89,7 +89,7 @@ async def run(deps: ActionExecutorDeps) -> RunContext:
     
     simulation = deps.settings.get("simulation_mode", True)
     device = deps.device.__dict__
-    commands = deps.current_action.command.splitlines()  # Split user input into multiple commands
+    commands = deps.current_action.commands
 
     for command in commands:
         if deps.settings.get("debug_mode", False) and deps.logger:

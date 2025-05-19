@@ -9,7 +9,7 @@ This module creates a graph that connects all agents in the following order:
 """
 
 from __future__ import annotations
-from typing import TypedDict, List, Dict, Any, Optional, Annotated
+from typing import TypedDict, List, Dict, Any, Optional, Annotated, Literal
 from dataclasses import dataclass
 from datetime import datetime
 import os
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from langgraph.types import interrupt, Command
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from httpx import AsyncClient
@@ -78,6 +79,8 @@ class NetworkTroubleshootingState(TypedDict):
     alert_raw_data: str
     fault_summary: Optional[FaultSummary]
     action_plan: Optional[List[TroubleshootingStep]]
+    action_plan_history: Optional[List[TroubleshootingStep]]  # New field
+    action_plan_remaining: Optional[List[TroubleshootingStep]]  # New field
     current_step_index: int
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
@@ -86,6 +89,7 @@ class NetworkTroubleshootingState(TypedDict):
     device_credentials: Optional[DeviceCredentials]
     settings: Dict[str, Any]  # Contains simulation_mode, test_mode, test_name, etc.
     test_data: Optional[Dict[str, Any]]  # Store loaded test data
+
 
 # Function to load test data
 def load_test_data(test_name: str) -> Dict[str, Any]:
@@ -313,6 +317,129 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
         "current_step_index": 0
     }
 
+async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState | Command[Literal["action_executor", "result_summary"]]:
+    """Router node that manages action plan workflow and handles approval requirements."""
+    logger.info("Running action router node")
+    
+    # 1. Update action_plan_history by appending the latest executed step
+    action_plan_history = state.get("action_plan_history", [])
+    action_plan_remaining = state.get("action_plan_remaining", [])
+
+    # TODO: Add something that checks to see if we're resuming after human interrupt (needs to use state data)
+
+    # TODO: Update this one we start using action analyzer
+    action_analysis = False
+
+    if action_analysis and action_plan_remaining:
+        executed_step = action_plan_remaining[0]
+        # Add the executed step to history if we have one
+        if executed_step:
+            action_plan_history.append(executed_step)
+        # Remove the first element since it's been executed
+        action_plan_remaining = action_plan_remaining[1:]
+    
+    # 3. Check device reachability
+    device_facts = state["device_facts"]
+    if not device_facts.get("reachable", False):
+        writer("⚠️ **Device is unreachable. Routing to result summary.**")
+        # Use Command to route to the result_summary node
+        return Command(
+            update={
+                "action_plan_history": action_plan_history,
+                "action_plan_remaining": action_plan_remaining
+            },
+            goto="result_summary"
+        )
+    
+    # Check if we have steps remaining
+    if not action_plan_remaining:
+        writer("⚠️ **No more steps to execute. Routing to result summary.**")
+        # Use Command to route to the result_summary node
+        return Command(
+            update={
+                "action_plan_history": action_plan_history,
+                "action_plan_remaining": action_plan_remaining
+            },
+            goto="result_summary"
+        )
+    
+    # 4. Get current_step
+    current_step = action_plan_remaining[0]
+    
+    # 5. Write step details for review
+    commands_text = "\n".join([f"- `{cmd}`" for cmd in current_step.commands]) if current_step.commands else "- No commands"
+    # TODO: Update this to use the same format as the action analyzer
+    writer(f"""## ⚡ Action Router - Step Review
+    
+**Step Description:** {current_step.description}
+
+**Action Type:** {current_step.action_type}
+
+**Commands to Execute:**
+{commands_text}
+
+**Expected Output:** {current_step.output_expectation}
+
+**Requires Approval:** {"Yes" if current_step.requires_approval else "No"}
+""")
+    
+    # 6. If action type is escalation, route to result summary
+    if current_step.action_type == "escalation":
+        writer("⚠️ **Escalation step detected. Routing to result summary.**")
+        # Use Command to route to the result_summary node
+        return Command(
+            update={
+                "action_plan_history": action_plan_history,
+                "action_plan_remaining": action_plan_remaining
+            },
+            goto="result_summary"
+        )
+
+    # 6. Check if approval is required and prompt user if needed
+    if current_step.requires_approval:
+        writer("\n\n⚠️ **This step requires approval. Waiting for user confirmation...**")
+        
+        # Use interrupt with the detailed payload
+        response_text = interrupt({})
+        
+        # Convert string response to boolean
+        # Accept various forms of "yes" as approval
+        if isinstance(response_text, str):
+            response = response_text.lower().strip() in ["yes", "y", "true", "approve", "1"]
+        else:
+            # Handle case where response might already be a boolean
+            response = bool(response_text)
+        
+        # 7-8. Handle user approval response
+        if response:
+            writer("✅ **Action approved by user. Proceeding to execution.**")
+            return Command(
+                update={
+                    "action_plan_history": action_plan_history,
+                    "action_plan_remaining": action_plan_remaining
+                },
+                goto="action_executor"
+            )
+        else:
+            writer("🛑 **Action rejected by user. Routing to result summary.**")
+            return Command(
+                update={
+                    "action_plan_history": action_plan_history,
+                    "action_plan_remaining": action_plan_remaining
+                },
+                goto="result_summary"
+            )
+    
+    # 9. No approval required, proceed to executor
+    writer("✅ **No approval required. Proceeding to execution.**")
+    return Command(
+        update={
+            "action_plan_history": action_plan_history,
+            "action_plan_remaining": action_plan_remaining
+        },
+        goto="action_executor"
+    )
+
 # Function to run the action executor agent
 async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Run the action executor agent to execute the current step in the action plan."""
@@ -504,19 +631,33 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
         "current_step_index": next_step_index
     }
 
-# Function to check if we should continue with the next step or end the workflow
-def should_continue_or_end(state: NetworkTroubleshootingState, writer) -> str:
-    """Decide whether to continue with the next step or end the workflow."""
-    action_plan = state["action_plan"]
-    current_step_index = state["current_step_index"]
+async def run_result_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
+    """Generate a summary of troubleshooting results."""
+    logger.info("Running result summary node")
     
-    if not action_plan or current_step_index >= len(action_plan):
-        logger.info("No more steps to execute, ending workflow")
-        writer("No more steps to execute, ending workflow")
-        return "end"
-    else:
-        logger.info(f"Moving to next step: {current_step_index + 1}/{len(action_plan)}")
-        return "continue"
+    writer("""## 📋 Troubleshooting Results Summary
+    
+**This is a stub implementation of the result_summary node.**
+
+This node will provide a comprehensive summary of all troubleshooting actions performed,
+including successful and failed steps, and recommendations for next actions.
+""")
+    
+    return state
+
+# # Function to check if we should continue with the next step or end the workflow
+# def should_continue_or_end(state: NetworkTroubleshootingState, writer) -> str:
+#     """Decide whether to continue with the next step or end the workflow."""
+#     action_plan = state["action_plan"]
+#     current_step_index = state["current_step_index"]
+    
+#     if not action_plan or current_step_index >= len(action_plan):
+#         logger.info("No more steps to execute, ending workflow")
+#         writer("No more steps to execute, ending workflow")
+#         return "end"
+#     else:
+#         logger.info(f"Moving to next step: {current_step_index + 1}/{len(action_plan)}")
+#         return "continue"
 
 # Build and compile the graph
 def build_graph() -> StateGraph:
@@ -528,25 +669,31 @@ def build_graph() -> StateGraph:
     builder.add_node("fault_summary_node", run_fault_summary_node)
     builder.add_node("init_deps", run_init_deps_node)
     builder.add_node("action_planner", run_action_planner_node)
+    builder.add_node("action_router", run_action_router_node)
     builder.add_node("action_executor", run_action_executor_node)
     builder.add_node("action_analyzer", run_action_analyzer_node)
+    builder.add_node("result_summary", run_result_summary_node)
     
     # Add edges to connect the nodes
     builder.add_edge(START, "fault_summary_node")
     builder.add_edge("fault_summary_node", "init_deps")
     builder.add_edge("init_deps", "action_planner")
-    builder.add_edge("action_planner", "action_executor")
+    builder.add_edge("action_planner", "action_router")
+    
+    # Let action_router use Command objects for dynamic routing
     builder.add_edge("action_executor", "action_analyzer")
+    builder.add_edge("action_analyzer", "action_router")
+    builder.add_edge("result_summary", END)
     
     # Add conditional logic for looping or ending the workflow
-    builder.add_conditional_edges(
-        "action_analyzer",
-        should_continue_or_end,
-        {
-            "continue": "action_executor",
-            "end": END
-        }
-    )
+    # builder.add_conditional_edges(
+    #     "action_analyzer",
+    #     should_continue_or_end,
+    #     {
+    #         "continue": "action_executor",
+    #         "end": END
+    #     }
+    # )
     
     return builder
 
