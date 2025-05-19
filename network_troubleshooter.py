@@ -65,11 +65,10 @@ async def main():
         print(f"Alert Title: {fault_summary.title}")
         print(f"Alert Summary: {fault_summary.summary}")
         print(f"Target Device: {fault_summary.hostname}")
-        print(f"Operating System: {fault_summary.operating_system}")
         print(f"Timestamp: {fault_summary.timestamp}")
         print(f"Severity: {fault_summary.severity}")
         print("\nOriginal Alert Details:")
-        print(json.dumps(fault_summary.original_alert_details, indent=2))
+        print(json.dumps(fault_summary.metadata, indent=2))
         print("=" * 60)
     elif choice == "3":
         print("Describe the network fault for troubleshooting:")
@@ -78,7 +77,7 @@ async def main():
         # Create a new FaultSummary with the user input as the summary
         network_fault_summary = FaultSummary(
             summary=user_input,
-            original_alert_details={"source": "user_input", "raw_text": user_input}
+            metadata={"source": "user_input", "raw_text": user_input}
         )
         
         # Create dependencies for the action planner

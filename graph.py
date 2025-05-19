@@ -33,6 +33,9 @@ from agents.action_analyzer import run as run_action_analyzer, ActionAnalysisRep
 # Load environment variables
 load_dotenv()
 
+# Path to the network device inventory YAML file
+inventory_path = "inventory/network_devices.yml"
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -40,16 +43,46 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def load_network_inventory(file_path: str) -> Dict[str, Any]:
+    """
+    Load network device inventory from a YAML file.
+    
+    This function will read in the details of a network device inventory
+    from a YAML file into a Python dictionary. The inventory contains
+    information about network devices such as hostname, IP address,
+    device type, credentials, etc.
+    
+    Args:
+        file_path: Path to the YAML file containing network inventory
+        
+    Returns:
+        Dict[str, Any]: Dictionary containing network device inventory
+        
+    Future enhancements:
+    - Add validation for required fields
+    - Support for different inventory formats
+    - Handle authentication information securely
+    """
+    # Stub function - will be implemented in the future
+    return {}
+
+# Load network inventory
+network_inventory = load_network_inventory(inventory_path)
+
 # Define the state for our graph
 class NetworkTroubleshootingState(TypedDict):
     """State for the network troubleshooting workflow graph."""
     latest_user_message: str
     messages: Annotated[List[bytes], lambda x, y: x + y]
+    inventory: Dict[str, Any]
+    alert_raw_data: str
     fault_summary: Optional[FaultSummary]
     action_plan: Optional[List[TroubleshootingStep]]
     current_step_index: int
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
+    device_driver: Optional[Any] # Placeholder for device driver
+    device_facts: Dict[str, Any]  # Placeholder for device facts
     device_credentials: Optional[DeviceCredentials]
     settings: Dict[str, Any]  # Contains simulation_mode, test_mode, test_name, etc.
     test_data: Optional[Dict[str, Any]]  # Store loaded test data
@@ -78,7 +111,7 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     logger.info("Running fault summary agent")
     
     # Get the input text and settings from the state
-    input_text = state["latest_user_message"]
+    alert_raw_data = state["latest_user_message"]
     settings = state["settings"]
     test_data = {}
     
@@ -89,7 +122,7 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
             test_data = load_test_data(test_name)
             if test_data and "alert_payload" in test_data:
                 # Use the test alert payload as input instead of user message
-                input_text = test_data["alert_payload"]
+                alert_raw_data = test_data["alert_payload"]
                 logger.info(f"Using test alert payload from test_{test_name}.yml")
     
     # Create dependencies for the fault summary agent
@@ -99,7 +132,7 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     )
     
     # Run the fault summary agent with dependencies
-    result = await run_fault_summary(input_text, deps=fault_summary_deps)
+    result = await run_fault_summary(alert_raw_data, deps=fault_summary_deps)
     fault_summary = result.output
 
     # Generate human-readable output for the writer based on FaultSummary class structure with Markdown formatting
@@ -107,16 +140,16 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
 
 **Title:** {fault_summary.title}  
 **Summary:** {fault_summary.summary}  
-**Device:** {fault_summary.hostname} ({fault_summary.operating_system})  
+**Device:** {fault_summary.hostname}  
 **Severity:** {fault_summary.severity}  
 **Timestamp:** {fault_summary.timestamp.strftime('%Y-%m-%d %H:%M:%S')}  
-**Alert Details:** {fault_summary.original_alert_details}
+**Alert Details:** {fault_summary.metadata}
 """)
 
     # Set device_credentials based upon the fault summary
     device_credentials = DeviceCredentials(
         hostname=fault_summary.hostname,
-        device_type=fault_summary.operating_system,
+        device_type=os.getenv("DEVICE_TYPE", "cisco_ios"),
         username=os.getenv("DEVICE_USERNAME", "admin"),
         password=os.getenv("DEVICE_PASSWORD", "password"),
         port=int(os.getenv("DEVICE_PORT", "22")),
@@ -126,9 +159,102 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     # Update the state with the fault summary and test data if available
     return {
         **state,
+        "alert_raw_data": alert_raw_data,
         "fault_summary": fault_summary,
         "device_credentials": device_credentials,
         "test_data": test_data
+    }
+
+# Function to run the init_deps node for dependency initialization
+async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
+    """Initialize device dependencies before running the action planner."""
+    logger.info("Running init_deps node")
+    
+    # Get settings and fault_summary from state
+    settings = state["settings"]
+    fault_summary = state["fault_summary"]
+    inventory = network_inventory  # Load network inventory
+    
+    # Initialize device_facts with default values
+    device_facts = {
+        "reachable": True,
+        "errors": []
+    }
+    
+    # Initialize device_driver as None
+    device_driver = None
+    
+    # Only perform actual device connection when not in simulation or test mode
+    if not settings.get("simulation_mode", True) and not settings.get("test_mode", False):
+        try:
+            # Get hostname from fault summary
+            hostname = fault_summary.hostname
+            
+            # Look up device details in inventory
+            device_details = inventory.get(hostname, {})
+            
+            if not device_details:
+                logger.warning(f"Device {hostname} not found in inventory")
+                device_facts["reachable"] = False
+                device_facts["errors"].append(f"Device {hostname} not found in inventory")
+            else:
+                # Generate NAPALM device driver
+                # PLACEHOLDER: Code to initialize NAPALM driver based on device_details
+                # device_driver = napalm.get_network_driver(device_details["driver"])
+                # device = device_driver(hostname, username, password, optional_args=optional_args)
+                # device.open()
+                
+                # Run get_facts on the driver
+                # PLACEHOLDER: Code to retrieve facts from the device
+                # device_facts = device.get_facts()
+                # Additional facts can be collected here
+                
+                # For placeholder purposes
+                device_driver = {"type": "napalm_driver", "device": hostname}
+                device_facts = {
+                    "hostname": hostname,
+                    "vendor": "cisco",
+                    "model": "CSR1000v",
+                    "uptime": 12345,
+                    "os_version": "16.9.3",
+                    "serial_number": "9KLAVM0JJ62",
+                    "reachable": True,
+                    "errors": []
+                }
+                
+                # Log successful connection
+                logger.info(f"Successfully connected to {hostname}")
+                
+        except Exception as e:
+            # Handle connection failures
+            error_message = f"Failed to connect to device: {str(e)}"
+            logger.error(error_message)
+            
+            # Update device_facts to indicate unreachable
+            device_facts["reachable"] = False
+            device_facts["errors"].append(error_message)
+    
+    # Generate output for the writer
+    if device_facts["reachable"]:
+        status = "✅ Device reachable"
+    else:
+        status = "❌ Device unreachable"
+    
+    writer(f"""## 🔌 Device Dependency Initialization
+
+**Device:** {fault_summary.hostname}
+**Status:** {status}
+
+{"### Errors:" if device_facts["errors"] else ""}
+{"".join([f"- {error}\n" for error in device_facts["errors"]])}
+""")
+    
+    # Update the state with the initialized dependencies
+    return {
+        **state,
+        "inventory": inventory,
+        "device_driver": device_driver,
+        "device_facts": device_facts
     }
 
 # Function to run the action planner agent
@@ -395,13 +521,15 @@ def build_graph() -> StateGraph:
     
     # Add nodes for each agent
     builder.add_node("fault_summary_node", run_fault_summary_node)
+    builder.add_node("init_deps", run_init_deps_node)
     builder.add_node("action_planner", run_action_planner_node)
     builder.add_node("action_executor", run_action_executor_node)
     builder.add_node("action_analyzer", run_action_analyzer_node)
     
     # Add edges to connect the nodes
     builder.add_edge(START, "fault_summary_node")
-    builder.add_edge("fault_summary_node", "action_planner")
+    builder.add_edge("fault_summary_node", "init_deps")
+    builder.add_edge("init_deps", "action_planner")
     builder.add_edge("action_planner", "action_executor")
     builder.add_edge("action_executor", "action_analyzer")
     

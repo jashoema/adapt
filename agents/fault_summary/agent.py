@@ -17,13 +17,12 @@ load_dotenv()
 @dataclass
 class FaultSummary(BaseModel):
     """Structured summary of a diagnosed network fault alert."""
-    title: str = Field(default="Default Title", description="A concise title for the network alert")
-    summary: str = Field(default="Unspecified network issue detected", description="A concise summary of the alert")
-    hostname: str = Field(default="unknown-device", description="Hostname of the target device")
-    operating_system: str = Field(default="Unknown OS", description="Operating system of the target device")
-    severity: Literal["Critical", "High", "Medium", "Low"] = Field(default="Medium", description="Estimated impact and urgency")
-    timestamp: datetime = Field(default_factory=datetime.now, description="Timestamp when the alert occurred")
-    original_alert_details: Dict[str, Any] = Field(default_factory=lambda: {"source": "manual", "details": "No details provided"}, description="Original alert details in JSON format")
+    title: str = Field(default="Default Title", description="concise alert title, ≤ 8 words")
+    summary: str = Field(default="Unspecified network issue detected", description="≤ 40-word factual synopsis")
+    hostname: str = Field(default="unknown-device", description="device hostname")
+    timestamp: datetime = Field(default_factory=datetime.now, description="ISO-8601 timestamp")
+    severity: Literal["Critical", "High", "Medium", "Low"] = Field(default="Medium", description="Alert severity level")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional diagnostic values like interface names, VRF, module IDs, neighbor IPs")
 
 class FaultSummaryDependencies(BaseModel):
     """Dependencies for the Fault Summary agent."""

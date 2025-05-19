@@ -84,7 +84,6 @@ async def run(deps: ActionAnalyzerDependencies) -> RunContext:
         f"- Title: {deps.fault_summary.title}\n"
         f"- Summary: {deps.fault_summary.summary}\n"
         f"- Hostname: {deps.fault_summary.hostname}\n"
-        f"- OS: {deps.fault_summary.operating_system}\n"
         f"- Severity: {deps.fault_summary.severity}\n"
         f"- Timestamp: {deps.fault_summary.timestamp}\n"
     )

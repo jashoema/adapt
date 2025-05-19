@@ -323,8 +323,6 @@ if user_input:
 
 **Target Device:** {fault_summary.hostname}
 
-**Operating System:** {fault_summary.operating_system}
-
 **Timestamp:** {fault_summary.timestamp}
 
 **Severity:** {fault_summary.severity}
@@ -332,7 +330,7 @@ if user_input:
 **Original Alert Details (JSON)**
 
 ```json
-{str(fault_summary.original_alert_details).replace("'", '"')}
+{str(fault_summary.metadata).replace("'", '"')}
 ```
 
                     """
@@ -343,9 +341,10 @@ if user_input:
                     
                     # Create a new FaultSummary with the user input as the summary
                     # THIS IS ONLY TEMPORARY until we introduce LangGraph
+                    # TODO: Update prompt for Action Planner to support plain text user input for standalone execution
                     network_fault_summary = FaultSummary(
                         summary=user_input,
-                        original_alert_details={"source": "user_input", "raw_text": user_input}
+                        metadata={"source": "user_input", "raw_text": user_input}
                     )
                     
                     # Create the dependency object
@@ -385,14 +384,14 @@ if user_input:
                     }
                     
                     # Create sample dependencies for the analyzer
+                    # TODO: Update Action Angalyzer to support plain text user input for standalone execution
                     network_fault_summary = FaultSummary(
                         title="Network Interface Analysis",
                         summary="Analyzing network interface performance and errors",
                         hostname="router1.example.com",
-                        operating_system="Cisco IOS",
                         severity="Medium",
                         timestamp=datetime.now().isoformat(),
-                        original_alert_details={"source": "user_input", "raw_text": "Interface analysis"}
+                        metadata={"source": "user_input", "raw_text": "Interface analysis"}
                     )
                     
                     action = TroubleshootingStep(
