@@ -1,6 +1,8 @@
 import os
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Literal
 from dataclasses import dataclass
+import json
+
 
 import logfire
 from pydantic import BaseModel, Field
@@ -38,13 +40,19 @@ class TroubleshootingStep(BaseModel):
 
     Attributes:
         description: A clear explanation of this diagnostic step.
-        command: The exact command to execute (use vendor-appropriate syntax).
+        action_type: The type of action being performed: diagnostic, config, exec, or escalation.
+        commands: List of CLI commands to execute (may be empty for escalation type).
         output_expectation: What should be expected in the output and how to interpret it.
         requires_approval: Whether this step may impact configurations or service.
     """
-    description: str = Field(..., description="What this diagnostic step checks")
-    command: str = Field(..., description="The precise CLI command to execute")
-    output_expectation: str = Field(..., description="What to look for in the output and diagnostic implications")
+    description: str = Field(..., description="What this step checks or accomplishes")
+    action_type: Literal["diagnostic", "config", "exec", "escalation"] = Field(
+        ..., description="Type of action: diagnostic, config, exec, or escalation"
+    )
+    commands: List[str] = Field(
+        ..., description="List of CLI commands to execute (may be empty for escalation)"
+    )
+    output_expectation: str = Field(..., description="What success looks like and how the output is used")
     requires_approval: bool = Field(..., description="True if this step could alter configuration or impact services")
 
 # Create the agent with type-safe output and instructions
@@ -71,7 +79,6 @@ async def run(user_input: str, deps: ActionPlannerDependencies) -> RunContext:
     if deps.settings is None:
         deps.settings = {"debug_mode": False, "simulation_mode": True}
     
-   
     # Log debug information if debug mode is enabled
     if deps.settings.get("debug_mode", False) and deps.logger:
         deps.logger.info("Action Planner Agent System Prompt", extra={
@@ -79,23 +86,23 @@ async def run(user_input: str, deps: ActionPlannerDependencies) -> RunContext:
             "user_input": user_input
         })
 
-    # If fault_summary is provided in ActionPLannerDependencies, add it to the context of the user_input
-    # Don't simply dump the object, but rather extract the relevant fields
-    if deps.fault_summary:
-        fault_summary = deps.fault_summary
-        fault_summary_context = (
-            f"Fault Summary:\n"
-            f"- Title: {fault_summary.title}\n"
-            f"- Summary: {fault_summary.summary}\n"
-            f"- Hostname: {fault_summary.hostname}\n"
-            f"- Severity: {fault_summary.severity}\n"
-            f"- Timestamp: {fault_summary.timestamp}\n"
-        )
-        user_input = (
-            f"{user_input}\n\n"
-            f"{fault_summary_context}"
-        )
+    # Manually extract fault_summary fields to avoid datetime serialization issues
+    fault_summary_dict = {
+        "title": deps.fault_summary.title,
+        "summary": deps.fault_summary.summary,
+        "hostname": deps.fault_summary.hostname,
+        "timestamp": deps.fault_summary.timestamp.isoformat() if deps.fault_summary.timestamp else None,
+        "severity": deps.fault_summary.severity,
+        "metadata": deps.fault_summary.metadata
+    }
+    
+    # Format the input according to the template
+    formatted_input = f"fault_summary:\n{json.dumps(fault_summary_dict)}\n\n"
+    formatted_input += f"device_facts:\n{json.dumps(deps.device_facts)}\n\n"
+    
+    if deps.custom_instructions:
+        formatted_input += f"custom_instructions:\n{deps.custom_instructions}"
+    else:
+        formatted_input += "custom_instructions:\n"  # Empty but present
 
-    return await action_planner.run(user_input, deps=deps)
-
-
+    return await action_planner.run(formatted_input, deps=deps)

@@ -89,10 +89,11 @@ async def run(deps: ActionAnalyzerDependencies) -> RunContext:
     )
     
     # Add context from the current step being analyzed
+    commands_str = "\n    ".join(deps.current_step.commands) if deps.current_step.commands else "None"
     current_step_context = (
         f"Current Step:\n"
         f"- Description: {deps.current_step.description}\n"
-        f"- Command: {deps.current_step.command}\n"
+        f"- Commands:\n    {commands_str}\n"
         f"- Output Expectation: {deps.current_step.output_expectation}\n"
     )
     

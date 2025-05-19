@@ -43,7 +43,6 @@ class CommandOutput(TypedDict):
 class ActionExecutorOutput:
     """Output from the action executor agent"""
     command_outputs: list[CommandOutput]  # List of command:output pairs
-    simulation_mode: bool
     errors: Optional[List[str]] = None
 
 @dataclass

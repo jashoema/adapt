@@ -98,7 +98,7 @@ You receive a single JSON object in the user message with three top-level fields
 {
   "fault_summary": { … },      // output of Fault Summary Agent
   "device_facts":  { … },      // inventory facts for the affected device
-  "troubleshooting_guide": "…" // optional; plain-text instructions
+  "custom_instructions": "…"   // optional; custom instructions for this workflow
 }
 ```
 
@@ -109,7 +109,7 @@ You receive a single JSON object in the user message with three top-level fields
   "title":           "…",
   "summary":         "…",
   "hostname":        "…",
-  "alert_timestamp": "…",      // key name is alert_timestamp
+  "timestamp":       "…",
   "severity":        "…",
   "metadata":        { … }
 }
@@ -136,11 +136,11 @@ Each element represents one ordered troubleshooting step with **exactly** the ke
 
 #### 3. **Planning Rules**
 
-1. **Follow any instructions found in `troubleshooting_guide` in the order given** before adding your own steps.
+1. When custom instructions are provided, **use custom_instructions to heavily influence your action plan**, only deviating where absolutely necessary to gather appropriate diagnostic data.
 2. Start with safe ↦ intrusive: run diagnostics first; propose configuration or exec actions only after confirming the problem.
 3. Set `requires_approval: true` for any `config` or `exec` step that could affect live traffic.
-4. Use the *vendor-correct* CLI syntax, inferred from `device_facts.vendor`, `model`, and `os_version`.
-5. Where dynamic values are unknown (e.g., `<ASN>`, `<IP>`), introduce variables using double-curly syntax, e.g. `{{asn}}`, and **add a prior diagnostic step** that retrieves each variable.
+4. Use the *vendor-correct* CLI syntax, inferred from `device_facts.vendor`, `model`, `os`, and `os_version`.
+5. Where dynamic values are unknown (e.g., `<ASN>`, `<IP>`), introduce variables using double-curly syntax, e.g. `{{asn}}`, and **add a prior diagnostic step** that retrieves each variable.  Before creating a variable, be sure to check if it is already present in `fault_summary.metadata` or `device_facts`.
 6. If the needed action is outside the workflow’s capabilities (e.g., hardware swap), create a single `escalation` step describing what human intervention is required and set `commands` to `[]`.
 7. Limit the entire plan to **15 steps or fewer**.
 8. The output **must be valid JSON only**—no extra keys, comments, or prose.
@@ -170,11 +170,10 @@ fault_summary:
 device_facts:
 {{device_facts_json}}
 
-troubleshooting_guide:
-{{troubleshooting_guide_text}}
+custom_instructions:
+{{custom_instructions}}
 ```
 
-*Replace the placeholders with live objects / text. If no guide is available, pass an empty string.*
 
 ---
 

@@ -264,6 +264,8 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     
     # Get the fault summary from the state
     fault_summary = state["fault_summary"]
+    custom_instructions = state.get("custom_instructions", {})
+    device_facts = state["device_facts"]
     settings = state["settings"]
     
     if not fault_summary:
@@ -273,6 +275,8 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     # Create dependencies for the action planner
     deps = ActionPlannerDependencies(
         fault_summary=fault_summary,
+        custom_instructions=custom_instructions,
+        device_facts=device_facts,
         settings=settings,
         logger=logger
     )
@@ -284,8 +288,13 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     # Generate human-readable output for the writer with Markdown formatting
     steps_markdown = []
     for i, step in enumerate(action_plan):
+        # Format commands as a bulleted list
+        commands_list = "\n".join([f"  - `{cmd}`" for cmd in step.commands]) if step.commands else "  - None"
+        
         steps_markdown.append(f"""### Step {i+1}: {step.description}
-- **📟 Command:** `{step.command}`
+- **🔄 Action Type:** {step.action_type}
+- **📟 Commands:** 
+{commands_list}
 - **🔍 Expected Output:** {step.output_expectation}
 - **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
 """)
@@ -325,57 +334,49 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     
     # Handle test mode - use command output from test data
     if settings.get("test_mode", False) and test_data:
-        command = current_step.command
+        commands = current_step.commands
         # Get command output from test data or use default message
-        command_output = test_data.get("commands", {}).get(command, "Output not available")
+        #command_output = test_data.get("commands", {}).get(commands, "Output not available")
         
         # Create simulated result structure
-        simulated_output = [{"cmd": command, "output": command_output}]
+        simulated_output = []
+        for command in commands:
+            command_output = test_data.get("commands", {}).get(command, "Output not available")
+            simulated_output.append({"cmd": command, "output": command_output})
+
+        command_outputs = simulated_output
+        errors = []
         
-        # Generate human-readable output with Markdown formatting
-        writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)} (Test Mode)
-
-**Command:** `{current_step.command}`
-
-### Output:
-```
-{command_output}
-```
-
-### Status:
-✅ **No errors encountered**
-""")
+    else: 
+        # Create dependencies for the action executor
+        deps = ActionExecutorDeps(
+            current_action=current_step,
+            settings=settings,
+            device=device_credentials,
+            client=AsyncClient(),
+            logger=logger
+        )
         
-        # Update the state with the test execution result
-        return {
-            **state,
-            "execution_result": {
-                "command_outputs": simulated_output,
-                "simulation_mode": False,
-                "errors": []
-            }
-        }
-    
-    # Create dependencies for the action executor
-    deps = ActionExecutorDeps(
-        current_action=current_step,
-        settings=settings,
-        device=device_credentials,
-        client=AsyncClient(),
-        logger=logger
-    )
-    
-    # Run the action executor agent for the current step
-    result = await run_action_executor(deps=deps)
+        # Run the action executor agent for the current step
+        result = await run_action_executor(deps=deps)
 
-    # Format the command outputs and errors with Markdown
+        command_outputs = result.output.command_outputs
+        errors = result.output.errors
+
+    
+    
+    # Format the commands, their outputs, and errors with Markdown
+    commands_md = ""
+    for cmd in command_outputs:
+        commands_md += f"- `{cmd['cmd']}`\n"    
+
     command_outputs_md = ""
-    for output in result.output.command_outputs:
+    for output in command_outputs:
         command_outputs_md += f"```\n{output['output']}\n```\n"
     
     errors_md = ""
-    if result.output.errors:
-        for error in result.output.errors:
+    if errors:
+        for error in errors:
             errors_md += f"- ❌ **Error:** {error}\n"
     else:
         errors_md = "✅ **No errors encountered**"
@@ -384,12 +385,15 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     mode_text = ""
     if settings.get("simulation_mode", True):
         mode_text = "**⚠️ SIMULATION MODE ⚠️**"
+    elif settings.get("test_mode", False):
+        mode_text = "**✅ TEST MODE**"
     else:
         mode_text = "**🔄 ACTUAL EXECUTION**"
         
     writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)}
 
-**Command:** `{current_step.command}`
+**Commands:** 
+{commands_md}
 
 {mode_text}
 
@@ -404,9 +408,8 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     return {
         **state,
         "execution_result": {
-            "command_outputs": result.output.command_outputs,
-            "simulation_mode": result.output.simulation_mode,
-            "errors": result.output.errors
+            "command_outputs": command_outputs,
+            "errors": errors
         }
     }
 
@@ -432,7 +435,6 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
     # Create the executor output object for the analyzer
     executor_output = type('ActionExecutorOutput', (), {
         'command_outputs': execution_result["command_outputs"],
-        'simulation_mode': execution_result["simulation_mode"],
         'errors': execution_result["errors"]
     })
     
@@ -473,9 +475,12 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
         recommendations_md = "- No specific recommendations\n"
     
     # Generate human-readable output for the writer with Markdown formatting
+    # Generate human-readable output for the writer with Markdown formatting
+    commands_text = "\n".join([f"- `{cmd}`" for cmd in current_step.commands]) if current_step.commands else "- No commands"
     writer(f"""## 📋 Analysis of Step {current_step_index+1} Results
 
-**Command Analyzed:** `{current_step.command}`
+**Commands Analyzed:**
+{commands_text}
 
 ### 📝 Key Findings:
 {key_findings_md}

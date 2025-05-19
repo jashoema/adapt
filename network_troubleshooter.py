@@ -97,8 +97,12 @@ async def main():
             approval_status = "⚠️  REQUIRES APPROVAL" if step.requires_approval else "✓  SAFE TO EXECUTE"
             print(f"\nStep {i}: {step.description}")
             print(f"Status: {approval_status}")
-            print(f"\nCommand to execute:")
-            print(f"  {step.command}")
+            print(f"\nCommands to execute:")
+            if step.commands:
+                for cmd in step.commands:
+                    print(f"  {cmd}")
+            else:
+                print("  No commands to execute")
             print(f"\nExpected output:")
             print(f"  {step.output_expectation}")
             print("-" * 40)
@@ -147,7 +151,8 @@ async def main():
         # Create a dummy TroubleshootingStep for execution
         action = TroubleshootingStep(
             description="Execute CLI command",
-            command="\n".join(commands),
+            action_type="diagnostic",
+            commands=commands,
             output_expectation="Command should execute successfully",
             requires_approval=False
         )

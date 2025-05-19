@@ -365,7 +365,10 @@ if user_input:
                         approval_tag = "⚠️ **Requires Approval**" if step.requires_approval else "✅ **Safe to Execute**"
                         formatted_output += f"## Step {i}: {step.description}\n\n"
                         formatted_output += f"{approval_tag}\n\n"
-                        formatted_output += f"**Command:**\n```\n{step.command}\n```\n\n"
+                        formatted_output += f"**Commands:**\n```\n"
+                        if step.commands:
+                            formatted_output += "\n".join(step.commands)
+                        formatted_output += "\n```\n\n"
                         formatted_output += f"**Expected Output:**\n{step.output_expectation}\n\n"
                         formatted_output += "---\n\n"
                     
@@ -396,7 +399,8 @@ if user_input:
                     
                     action = TroubleshootingStep(
                         description="Analyze interface statistics",
-                        command="show interfaces",
+                        action_type="diagnostic",
+                        commands=["show interfaces"],
                         output_expectation="Review for errors, bandwidth utilization, and packet loss",
                         requires_approval=False
                     )
@@ -462,7 +466,8 @@ if user_input:
                     
                     action = TroubleshootingStep(
                         description="Execute CLI command",
-                        command=user_input,
+                        action_type="diagnostic",
+                        commands=[user_input],
                         output_expectation="Command should execute successfully",
                         requires_approval=False
                     )
