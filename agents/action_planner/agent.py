@@ -3,13 +3,12 @@ from typing import List, Optional, Any, Dict, Literal
 from dataclasses import dataclass
 import json
 
-
 import logfire
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
 from .agent_prompts import SYSTEM_PROMPT
-from ..fault_summary.agent import FaultSummary
+from ..models import FaultSummary, TroubleshootingStep
 
 # Logfire instrumentation is enabled if API key is set
 logfire_api_key = os.getenv('LOGFIRE_KEY')
@@ -33,28 +32,6 @@ class ActionPlannerDependencies:
     custom_instructions: Optional[Dict[str, Any]] 
     logger: Optional[Any]
     
-@dataclass
-class TroubleshootingStep(BaseModel):
-    """
-    Represents a single diagnostic step in a network troubleshooting plan.
-
-    Attributes:
-        description: A clear explanation of this diagnostic step.
-        action_type: The type of action being performed: diagnostic, config, exec, or escalation.
-        commands: List of CLI commands to execute (may be empty for escalation type).
-        output_expectation: What should be expected in the output and how to interpret it.
-        requires_approval: Whether this step may impact configurations or service.
-    """
-    description: str = Field(..., description="What this step checks or accomplishes")
-    action_type: Literal["diagnostic", "config", "exec", "escalation"] = Field(
-        ..., description="Type of action: diagnostic, config, exec, or escalation"
-    )
-    commands: List[str] = Field(
-        ..., description="List of CLI commands to execute (may be empty for escalation)"
-    )
-    output_expectation: str = Field(..., description="What success looks like and how the output is used")
-    requires_approval: bool = Field(..., description="True if this step could alter configuration or impact services")
-
 # Create the agent with type-safe output and instructions
 action_planner = Agent(
     model="openai:gpt-4o",
@@ -99,6 +76,7 @@ async def run(user_input: str, deps: ActionPlannerDependencies) -> RunContext:
     # Format the input according to the template
     formatted_input = f"fault_summary:\n{json.dumps(fault_summary_dict)}\n\n"
     formatted_input += f"device_facts:\n{json.dumps(deps.device_facts)}\n\n"
+    formatted_input += f"max_steps: {deps.settings['max_steps']}\n\n"
     
     if deps.custom_instructions:
         formatted_input += f"custom_instructions:\n{deps.custom_instructions}"

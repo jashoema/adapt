@@ -1,0 +1,22 @@
+# Default application settings
+# This file configures default values for various application settings
+
+# Debug mode - enables additional logging and debug information
+debug_mode: false
+
+# Simulation mode - when true, commands are not executed on actual devices
+simulation_mode: true
+
+# Test mode - when true, uses test data instead of real device interactions
+test_mode: false
+
+# Test name - specifies which test data file to use (without the .yml extension)
+test_name: ""
+
+# Maximum number of steps to execute in an action plan before escalating
+max_steps: 15
+
+golden_rules:
+  - "rule1"
+  - "rule2"
+  - "rule3"

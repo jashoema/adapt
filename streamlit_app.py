@@ -3,7 +3,7 @@ import asyncio
 import os
 import glob
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Any
 import yaml
 from dotenv import load_dotenv
 from httpx import AsyncClient
@@ -15,6 +15,9 @@ from langgraph.types import Command
 
 # Import the custom StreamlitLogger
 from utils.streamlit_logger import get_streamlit_logger
+
+# Import settings loader from graph.py
+from graph import load_settings, settings_path
 
 # Create a main logger for the streamlit app
 logger = get_streamlit_logger("streamlit_app")
@@ -37,6 +40,18 @@ from agents.action_analyzer.agent import ActionAnalyzerDependencies
 
 # Import the graph for the Multi-Agent workflow
 from graph import agentic_flow
+
+# Function to save settings to YAML file
+def save_settings(settings: Dict[str, Any], file_path: str = settings_path) -> bool:
+    """Save current settings to the YAML file."""
+    try:
+        with open(file_path, 'w') as file:
+            yaml.safe_dump(settings, file)
+        logger.info(f"Settings saved to {file_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving settings: {str(e)}")
+        return False
 
 # Get available test scenarios from the tests directory
 def get_available_tests() -> List[str]:
@@ -66,7 +81,7 @@ def load_test_file_preview(test_name: str) -> str:
 
 # Set page configuration
 st.set_page_config(
-    page_title="AI Agents Dashboard",
+    page_title="Autonomous Network Troubleshooter Dashboard",
     page_icon="🤖",
     layout="centered"
 )
@@ -105,34 +120,38 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
         ):
             yield msg
 
-# Initialize settings in session state
+# Initialize settings in session state if it doesn't exist
 if "settings" not in st.session_state:
-    st.session_state.settings = {
-        "simulation_mode": os.getenv("SIMULATION_MODE", "true").lower() == "true",
-        "debug_mode": os.getenv("DEBUG_MODE", "false").lower() == "false",
-        "test_mode": False,
-        "test_name": ""
-    }
+    # Load settings from the configuration file
+    config_settings = load_settings(settings_path)
+    st.session_state.settings = config_settings
+else:
+    # If settings are already in session state, ensure all required settings are present
+    config_settings = load_settings(settings_path)
+    for key, value in config_settings.items():
+        if key not in st.session_state.settings:
+            st.session_state.settings[key] = value
 
 # Add a title and description
-st.title("🤖 AI Agents Dashboard")
+st.title("🤖 Autonomous Network Troubleshooter Dashboard")
 
 # Add sidebar for agent selection
 with st.sidebar:
-    st.header("Select Agent")
+    st.header("Select Workflow")
     agent_type = st.radio(
-        "Choose an agent:",
-        ["Hello World Agent", "Fault Summarizer", "Network Troubleshooting Planner", "Command Executor", "Action Analyzer", "Multi-Agent"]
+        "Choose an workflow option:",
+        ["Full Multi-Agent Workflow", "Fault Summarizer Agent", "Action Planner Agent", "Action Executor Agent", "Action Analyzer Agent", "Summary Report Agent", "Hello World Agent"],
+        index=0
     )
     
     # Add toggles for settings
     st.header("Settings")
     simulation_mode = st.toggle("Simulation Mode", value=st.session_state.settings["simulation_mode"], help="Enable simulation mode to run commands without actual execution")
     debug_mode = st.toggle("Debug Mode", value=st.session_state.settings["debug_mode"], help="Enable debug mode for additional logging and information")
-    
+
     # Test mode toggle and test scenario selection
     test_mode = st.toggle("Test Mode", value=st.session_state.settings["test_mode"], 
-                         help="Enable test mode to use predefined test data instead of real executions")
+                help="Enable test mode to use predefined test data instead of real executions")
     
     # If test mode is enabled, show test scenario selection
     if test_mode:
@@ -144,8 +163,14 @@ with st.sidebar:
                 options=available_tests,
                 index=None,
                 placeholder="Choose a test scenario...",
-                help="Select a predefined test scenario to run"
+                help="Select a predefined test scenario to run",
+                key="test_scenario_select"
             )
+            
+            # Initialize with the saved value if available
+            if not test_name and st.session_state.settings["test_name"]:
+                if st.session_state.settings["test_name"] in available_tests:
+                    test_name = st.session_state.settings["test_name"]
             
             # # Show test file preview
             # with st.expander("Test Scenario Preview"):
@@ -157,22 +182,69 @@ with st.sidebar:
     else:
         test_name = ""
     
+    # Add number input for max_steps
+    max_steps = st.number_input(
+        "Max Steps", 
+        min_value=1,
+        max_value=25,
+        value=st.session_state.settings["max_steps"],
+        step=1,
+        help="Maximum number of steps to execute before escalating to human intervention"
+    )
+
+    # Golden Rules section with expander
+    with st.expander("Golden Rules", expanded=False):
+        st.caption("These rules are always followed by the agentic workflow:")
+        
+        # Initialize golden_rules if not already in session_state.settings
+        if "golden_rules" not in st.session_state.settings:
+            st.session_state.settings["golden_rules"] = []
+        
+        # Display current golden rules with the option to remove them
+        for i, rule in enumerate(st.session_state.settings["golden_rules"]):
+            col1, col2 = st.columns([5, 1])
+            with col1:
+                rule_text = st.text_input(f"Rule {i+1}", value=rule, key=f"rule_{i}")
+                # Update rule text if changed
+                if rule_text != rule:
+                    st.session_state.settings["golden_rules"][i] = rule_text
+            
+            with col2:
+                if st.button("🗑️", key=f"delete_rule_{i}"):
+                    st.session_state.settings["golden_rules"].pop(i)
+                    st.rerun()
+        
+        # Add new rule
+        new_rule = st.text_input("Add new rule", key="new_rule_input")
+        if st.button("Add Rule", key="add_rule_btn"):
+            if new_rule.strip():
+                st.session_state.settings["golden_rules"].append(new_rule)
+                st.rerun()
+    
+    # Persist settings button
+    if st.button("Save Settings to File"):
+        success = save_settings(st.session_state.settings)
+        if success:
+            st.success("Settings saved successfully!")
+        else:
+            st.error("Failed to save settings.")
+    
     # Update session state with current settings
     # When test_mode is enabled, disable simulation_mode automatically
     st.session_state.settings["simulation_mode"] = simulation_mode and not test_mode
     st.session_state.settings["debug_mode"] = debug_mode
     st.session_state.settings["test_mode"] = test_mode
     st.session_state.settings["test_name"] = test_name
+    st.session_state.settings["max_steps"] = max_steps
     
-    # Show current mode status
+    # Add a button to reset settings to default
+    if st.button("Reset to Default Settings"):
+        config_settings = load_settings(settings_path)
+        st.session_state.settings = config_settings
+        st.rerun()
+    
     st.divider()
-    if st.session_state.settings["test_mode"]:
-        st.info(f"Running in TEST MODE with scenario: {test_name or 'None selected'}")
-    elif st.session_state.settings["simulation_mode"]:
-        st.info("Running in SIMULATION MODE")
-    else:
-        st.warning("Running in PRODUCTION MODE - Commands will execute on real devices")
-    
+
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
     st.markdown("### 👋 Hello World Agent")
@@ -195,30 +267,44 @@ elif agent_type == "Multi-Agent":
     st.markdown("2. 🔍 **Action Planning**: Create a troubleshooting plan with specific steps")
     st.markdown("3. 🖥️ **Action Execution**: Execute each step of the plan")
     st.markdown("4. 📊 **Action Analysis**: Analyze the output of each step")
-    st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
+    if st.session_state.settings["test_mode"]:
+        st.info(f"Running in TEST MODE with scenario: {test_name or 'None selected'}")
+    elif st.session_state.settings["simulation_mode"]:
+        st.info("Running in SIMULATION MODE")
+    else:
+        st.warning("Running in PRODUCTION MODE - Commands will execute on real devices")
+    
+    # Show golden rules information
+    with st.expander("Active Golden Rules"):
+        if st.session_state.settings.get("golden_rules"):
+            for i, rule in enumerate(st.session_state.settings["golden_rules"]):
+                st.markdown(f"{i+1}. {rule}")
+        else:
+            st.markdown("No golden rules configured")
+    # st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
     
     # Add device info display for Multi-Agent as well
-    device_info = {
-        "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-        "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
-        "SSH Port": os.getenv("DEVICE_PORT", "22")
-    }
-    st.sidebar.subheader("Device Information")
-    for key, value in device_info.items():
-        st.sidebar.text(f"{key}: {value}")
+    # device_info = {
+    #     "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
+    #     "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
+    #     "SSH Port": os.getenv("DEVICE_PORT", "22")
+    # }
+    # st.sidebar.subheader("Device Information")
+    # for key, value in device_info.items():
+    #     st.sidebar.text(f"{key}: {value}")
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
     st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
     # Add device info display
-    device_info = {
-        "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-        "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
-        "SSH Port": os.getenv("DEVICE_PORT", "22")
-    }
-    st.sidebar.subheader("Device Information")
-    for key, value in device_info.items():
-        st.sidebar.text(f"{key}: {value}")
+    # device_info = {
+    #     "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
+    #     "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
+    #     "SSH Port": os.getenv("DEVICE_PORT", "22")
+    # }
+    # st.sidebar.subheader("Device Information")
+    # for key, value in device_info.items():
+    #     st.sidebar.text(f"{key}: {value}")
 
 # Initialize chat history in session state if it doesn't exist
 if "messages" not in st.session_state:
@@ -454,16 +540,6 @@ if user_input:
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Command Executor Agent", extra={"user_input": user_input})
                     
-                    # Create device credentials from environment variables
-                    device_credentials = DeviceCredentials(
-                        hostname=os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-                        device_type=os.getenv("DEVICE_TYPE", "cisco_ios"),
-                        username=os.getenv("DEVICE_USERNAME", "admin"),
-                        password=os.getenv("DEVICE_PASSWORD", "password"),
-                        port=int(os.getenv("DEVICE_PORT", "22")),
-                        secret=os.getenv("DEVICE_SECRET", None)
-                    )
-                    
                     action = TroubleshootingStep(
                         description="Execute CLI command",
                         action_type="diagnostic",
@@ -474,10 +550,8 @@ if user_input:
 
                     # Create dependencies for the action executor
                     action_executor_deps = ActionExecutorDeps(
-                        current_action=action,
+                        current_step=action,
                         simulation_mode=st.session_state.settings["simulation_mode"],
-                        device=device_credentials,
-                        client=AsyncClient(),
                         settings=st.session_state.settings,
                         logger=agent_logger
                     )

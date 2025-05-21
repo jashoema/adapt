@@ -1,0 +1,10 @@
+debug_mode: true
+golden_rules:
+- rule1
+- rule2
+- rule3
+- meow
+max_steps: 15
+simulation_mode: true
+test_mode: false
+test_name: ''

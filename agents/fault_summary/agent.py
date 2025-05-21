@@ -7,22 +7,11 @@ from pydantic_ai import Agent
 from datetime import datetime
 from dataclasses import dataclass
 
-
 from .agent_prompts import FAULT_SUMMARY_SYSTEM_PROMPT
+from ..models import FaultSummary
 
 # Load environment variables from .env file
 load_dotenv()
-
-# Structured output schema for fault summarization
-@dataclass
-class FaultSummary(BaseModel):
-    """Structured summary of a diagnosed network fault alert."""
-    title: str = Field(default="Default Title", description="concise alert title, ≤ 8 words")
-    summary: str = Field(default="Unspecified network issue detected", description="≤ 40-word factual synopsis")
-    hostname: str = Field(default="unknown-device", description="device hostname")
-    timestamp: datetime = Field(default_factory=datetime.now, description="ISO-8601 timestamp")
-    severity: Literal["Critical", "High", "Medium", "Low"] = Field(default="Medium", description="Alert severity level")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional diagnostic values like interface names, VRF, module IDs, neighbor IPs")
 
 class FaultSummaryDependencies(BaseModel):
     """Dependencies for the Fault Summary agent."""

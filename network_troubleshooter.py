@@ -138,16 +138,6 @@ async def main():
         except EOFError:
             pass
         
-        # Setup device credentials from environment variables
-        device_credentials = DeviceCredentials(
-            hostname=os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-            device_type=os.getenv("DEVICE_TYPE", "cisco_ios"),
-            username=os.getenv("DEVICE_USERNAME", "admin"),
-            password=os.getenv("DEVICE_PASSWORD", "password"),
-            port=int(os.getenv("DEVICE_PORT", "22")),
-            secret=os.getenv("DEVICE_SECRET", None)
-        )
-        
         # Create a dummy TroubleshootingStep for execution
         action = TroubleshootingStep(
             description="Execute CLI command",
@@ -161,8 +151,6 @@ async def main():
         deps = ActionExecutorDeps(
             current_action=action,
             simulation_mode=simulation_mode,
-            device=device_credentials,
-            client=AsyncClient(),
             settings=settings
         )
         

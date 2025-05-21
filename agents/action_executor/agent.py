@@ -10,7 +10,7 @@ from pydantic_ai import Agent, RunContext, ModelRetry
 
 from .agent_tools import execute_cli_commands, execute_cli_config
 from .agent_prompts import SYSTEM_PROMPT
-from ..action_planner.agent import TroubleshootingStep
+from ..models import DeviceCredentials, CommandOutput, ActionExecutorOutput, TroubleshootingStep
 
 import logfire
 
@@ -24,27 +24,6 @@ logfire.instrument_openai()
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("action_executor.agent")
-
-@dataclass
-class DeviceCredentials:
-    hostname: str
-    device_type: str
-    username: str
-    password: str
-    port: int = 22
-    secret: str | None = None  # For enable/privileged mode
-    # Add more fields as required for different device types
-
-class CommandOutput(TypedDict):
-    cmd: str
-    output: str
-
-@dataclass
-class ActionExecutorOutput:
-    """Output from the action executor agent"""
-    description: str  # Description of the action taken
-    command_outputs: list[CommandOutput]  # List of command:output pairs
-    errors: Optional[List[str]] = None
 
 class ActionExecutorDeps:
     current_step: TroubleshootingStep

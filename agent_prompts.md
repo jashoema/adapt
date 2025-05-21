@@ -309,12 +309,13 @@ The user message supplies one JSON object:
 
 ```jsonc
 {
-  "command_output":      { "<cmd>": "<raw text>", … },
+  "command_output":      [{"cmd": "<command>","output": "<command output>"}, …],
+  "errors":              ["<error msg>", …],   // empty array if none
   "current_step":        { … },
   "fault_summary":       { … },
   "device_facts":        { … },
   "action_plan_history": [{ step_result objects … }],
-  "remaining_actions":   [{ action_step objects … }]
+  "action_plan_remaining":   [{ action_step objects … }]
 }
 ```
 
@@ -328,15 +329,15 @@ The user message supplies one JSON object:
 
 2. **Decide next move** by setting **`next_action_type`**:
 
-   * `continue` – proceed with the first item in `remaining_actions` (normal path)
-   * `new_action` – the findings invalidate the next planned step; supply a **fresh `updated_remaining_actions` list** (see below)
+   * `continue` – proceed with the first item in `action_plan_remaining` (normal path)
+   * `new_action` – the findings invalidate the next planned step; supply a **fresh `updated_action_plan_remaining` list** (see below)
    * `escalate` – automation can’t continue; human/third-party needed
    * `resolve` – fault is no longer present / has been cleared
 
-3. **Explain** your choice in one sentence (`reason`) and list key evidence lines (`abnormal_findings`, max 5).
+3. **Explain** your choice in one sentence (`next_action_reason`) and list key evidence lines (`findings`, max 5).
 
 4. **If `next_action_type == "new_action"`**
-   • **Recompute the remaining plan**: create a full array of steps (`updated_remaining_actions`) that replaces the original `remaining_actions`.
+   • **Recompute the remaining plan**: create a full array of steps (`updated_action_plan_remaining`) that replaces the original `action_plan_remaining`.
    • Each step must follow the Action Planner schema.
    • Keep total steps ≤ 15.
 
@@ -349,10 +350,10 @@ Return only this JSON object—in the key order shown—no prose, no code fences
 ```jsonc
 {
   "analysis": "<≤120-word technical summary>",
-  "abnormal_findings": ["<line excerpt 1>", …],     // empty array if none
+  "findings": ["<line excerpt 1>", …],     // empty array if none
   "next_action_type": "<continue|new_action|escalate|resolve>",
-  "reason": "<1-sentence justification>",
-  "updated_remaining_actions": [{ … }]              // include **only** when next_action_type == "new_action"
+  "next_action_reason": "<1-sentence justification for >",
+  "updated_action_plan_remaining": [{ … }]              // include **only** when next_action_type == "new_action"
 }
 ```
 
@@ -362,7 +363,7 @@ Return only this JSON object—in the key order shown—no prose, no code fences
 
 * Do **not** execute commands or modify device state.
 * Quote minimal substrings for evidence; strip prompts (`#`, `>`).
-* When rebuilding `updated_remaining_actions`, prepend any urgent new steps before untouched ones that are still relevant.
+* When rebuilding `updated_action_plan_remaining`, prepend any urgent new steps before untouched ones that are still relevant.
 
 ---
 
@@ -375,7 +376,7 @@ Return only this JSON object—in the key order shown—no prose, no code fences
   "fault_summary":       {{fault_summary_json}},
   "device_facts":        {{device_facts_json}},
   "action_plan_history": {{action_plan_history_json}},
-  "remaining_actions":   {{remaining_actions_json}}
+  "action_plan_remaining":   {{action_plan_remaining_json}}
 }
 ```
 
