@@ -287,7 +287,7 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
 **Status:** {status}
 
 {"### Errors:" if device_facts["errors"] else ""}
-{"".join([f"- {error}\n" for error in device_facts["errors"]])}
+{"".join([f"- {error}" for error in device_facts["errors"]])}
 """)
     
     # Update the state with the initialized dependencies
