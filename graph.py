@@ -9,7 +9,7 @@ This module creates a graph that connects all agents in the following order:
 """
 
 from __future__ import annotations
-from typing import TypedDict, List, Dict, Any, Optional, Annotated
+from typing import TypedDict, List, Dict, Any, Optional, Annotated, Literal
 from dataclasses import dataclass
 from datetime import datetime
 import os
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+from langgraph.types import interrupt, Command
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from httpx import AsyncClient
@@ -33,6 +34,11 @@ from agents.action_analyzer import run as run_action_analyzer, ActionAnalysisRep
 # Load environment variables
 load_dotenv()
 
+# Path to the network device inventory YAML file
+inventory_path = os.getenv("INVENTORY_PATH", "configuration/inventory.yml")
+# Path to the settings YAML file
+settings_path = os.getenv("SETTINGS_PATH", "configuration/settings.yml")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -40,19 +46,97 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def load_settings(file_path: str) -> Dict[str, Any]:
+    """
+    Load application settings from a YAML file.
+    
+    This function reads configuration settings from a YAML file into a Python dictionary.
+    Settings include debug_mode, simulation_mode, test_mode, test_name, max_steps, and golden_rules.
+    
+    Args:
+        file_path: Path to the YAML file containing settings
+        
+    Returns:
+        Dict[str, Any]: Dictionary containing application settings
+        
+    If the settings file doesn't exist or can't be loaded, default settings will be returned.
+    """
+    default_settings = {
+        "debug_mode": False,
+        "simulation_mode": True,
+        "test_mode": False,
+        "test_name": "",
+        "max_steps": 15,
+        "golden_rules": []
+    }
+    
+    try:
+        if not os.path.exists(file_path):
+            logger.warning(f"Settings file {file_path} not found, using defaults")
+            return default_settings
+            
+        with open(file_path, 'r') as file:
+            settings = yaml.safe_load(file)
+            
+        # Ensure all expected settings are present
+        for key in default_settings:
+            if key not in settings:
+                settings[key] = default_settings[key]
+                
+        logger.info(f"Loaded settings from {file_path}")
+        return settings
+    except Exception as e:
+        logger.error(f"Error loading settings: {str(e)}")
+        return default_settings
+
+def load_network_inventory(file_path: str) -> Dict[str, Any]:
+    """
+    Load network device inventory from a YAML file.
+    
+    This function will read in the details of a network device inventory
+    from a YAML file into a Python dictionary. The inventory contains
+    information about network devices such as hostname, IP address,
+    device type, credentials, etc.
+    
+    Args:
+        file_path: Path to the YAML file containing network inventory
+        
+    Returns:
+        Dict[str, Any]: Dictionary containing network device inventory
+        
+    Future enhancements:
+    - Add validation for required fields
+    - Support for different inventory formats
+    - Handle authentication information securely
+    """
+    # Stub function - will be implemented in the future
+    return {}
+
+# Load network inventory
+network_inventory = load_network_inventory(inventory_path)
+
 # Define the state for our graph
 class NetworkTroubleshootingState(TypedDict):
     """State for the network troubleshooting workflow graph."""
     latest_user_message: str
     messages: Annotated[List[bytes], lambda x, y: x + y]
+    inventory: Dict[str, Any]
+    alert_raw_data: str
     fault_summary: Optional[FaultSummary]
     action_plan: Optional[List[TroubleshootingStep]]
+    action_plan_history: Optional[List[TroubleshootingStep]]  
+    action_plan_remaining: Optional[List[TroubleshootingStep]]
     current_step_index: int
+    current_step: TroubleshootingStep
+    custom_instructions: str
+    action_executor_history: List[Dict[str, Any]]
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
-    device_credentials: Optional[DeviceCredentials]
+    device_driver: Optional[Any] # Placeholder for device driver
+    device_facts: Dict[str, Any]  # Placeholder for device facts
     settings: Dict[str, Any]  # Contains simulation_mode, test_mode, test_name, etc.
     test_data: Optional[Dict[str, Any]]  # Store loaded test data
+
 
 # Function to load test data
 def load_test_data(test_name: str) -> Dict[str, Any]:
@@ -78,7 +162,7 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     logger.info("Running fault summary agent")
     
     # Get the input text and settings from the state
-    input_text = state["latest_user_message"]
+    alert_raw_data = state["latest_user_message"]
     settings = state["settings"]
     test_data = {}
     
@@ -87,10 +171,11 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
         test_name = settings.get("test_name", "")
         if test_name:
             test_data = load_test_data(test_name)
-            if test_data and "alert_payload" in test_data:
-                # Use the test alert payload as input instead of user message
-                input_text = test_data["alert_payload"]
-                logger.info(f"Using test alert payload from test_{test_name}.yml")
+            if test_data:
+                if "alert_payload" in test_data:
+                    # Use the test alert payload as input instead of user message
+                    alert_raw_data = test_data["alert_payload"]
+                    logger.info(f"Using test alert payload from test_{test_name}.yml")
     
     # Create dependencies for the fault summary agent
     fault_summary_deps = FaultSummaryDependencies(
@@ -99,7 +184,7 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     )
     
     # Run the fault summary agent with dependencies
-    result = await run_fault_summary(input_text, deps=fault_summary_deps)
+    result = await run_fault_summary(alert_raw_data, deps=fault_summary_deps)
     fault_summary = result.output
 
     # Generate human-readable output for the writer based on FaultSummary class structure with Markdown formatting
@@ -107,28 +192,110 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
 
 **Title:** {fault_summary.title}  
 **Summary:** {fault_summary.summary}  
-**Device:** {fault_summary.hostname} ({fault_summary.operating_system})  
+**Device:** {fault_summary.hostname}  
 **Severity:** {fault_summary.severity}  
 **Timestamp:** {fault_summary.timestamp.strftime('%Y-%m-%d %H:%M:%S')}  
-**Alert Details:** {fault_summary.original_alert_details}
+**Additional Metadata:** {fault_summary.metadata}
 """)
 
-    # Set device_credentials based upon the fault summary
-    device_credentials = DeviceCredentials(
-        hostname=fault_summary.hostname,
-        device_type=fault_summary.operating_system,
-        username=os.getenv("DEVICE_USERNAME", "admin"),
-        password=os.getenv("DEVICE_PASSWORD", "password"),
-        port=int(os.getenv("DEVICE_PORT", "22")),
-        secret=os.getenv("DEVICE_SECRET")
-    )
-    
     # Update the state with the fault summary and test data if available
     return {
         **state,
+        "alert_raw_data": alert_raw_data,
         "fault_summary": fault_summary,
-        "device_credentials": device_credentials,
         "test_data": test_data
+    }
+
+# Function to run the init_deps node for dependency initialization
+async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
+    """Initialize device dependencies before running the action planner."""
+    logger.info("Running init_deps node")
+    
+    # Get settings and fault_summary from state
+    settings = state["settings"]
+    fault_summary = state["fault_summary"]
+    inventory = network_inventory  # Load network inventory
+    
+    # Initialize device_facts with default values
+    device_facts = {
+        "reachable": True,
+        "errors": []
+    }
+    
+    # Initialize device_driver as None
+    device_driver = None
+    
+    # Only perform actual device connection when not in simulation or test mode
+    if not settings.get("simulation_mode", True) and not settings.get("test_mode", False):
+        try:
+            # Get hostname from fault summary
+            hostname = fault_summary.hostname
+            
+            # Look up device details in inventory
+            device_details = inventory.get(hostname, {})
+            
+            if not device_details:
+                logger.warning(f"Device {hostname} not found in inventory")
+                device_facts["reachable"] = False
+                device_facts["errors"].append(f"Device {hostname} not found in inventory")
+            else:
+                # Generate NAPALM device driver
+                # PLACEHOLDER: Code to initialize NAPALM driver based on device_details
+                # device_driver = napalm.get_network_driver(device_details["driver"])
+                # device = device_driver(hostname, username, password, optional_args=optional_args)
+                # device.open()
+                
+                # Run get_facts on the driver
+                # PLACEHOLDER: Code to retrieve facts from the device
+                # device_facts = device.get_facts()
+                # Additional facts can be collected here
+                
+                # For placeholder purposes
+                device_driver = {"type": "napalm_driver", "device": hostname}
+                device_facts = {
+                    "hostname": hostname,
+                    "vendor": "cisco",
+                    "model": "CSR1000v",
+                    "uptime": 12345,
+                    "os_version": "16.9.3",
+                    "serial_number": "9KLAVM0JJ62",
+                    "reachable": True,
+                    "errors": []
+                }
+                
+                # Log successful connection
+                logger.info(f"Successfully connected to {hostname}")
+                
+        except Exception as e:
+            # Handle connection failures
+            error_message = f"Failed to connect to device: {str(e)}"
+            logger.error(error_message)
+            
+            # Update device_facts to indicate unreachable
+            device_facts["reachable"] = False
+            device_facts["errors"].append(error_message)
+    
+    # Generate output for the writer
+    if device_facts["reachable"]:
+        status = "✅ Device reachable"
+    else:
+        status = "❌ Device unreachable"
+    
+    writer(f"""## 🔌 Device Dependency Initialization
+
+**Device:** {fault_summary.hostname}
+**Status:** {status}
+
+{"### Errors:" if device_facts["errors"] else ""}
+{"".join([f"- {error}\n" for error in device_facts["errors"]])}
+""")
+    
+    # Update the state with the initialized dependencies
+    return {
+        **state,
+        "inventory": inventory,
+        "device_driver": device_driver,
+        "device_facts": device_facts
     }
 
 # Function to run the action planner agent
@@ -138,15 +305,27 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     
     # Get the fault summary from the state
     fault_summary = state["fault_summary"]
+    custom_instructions = state.get("custom_instructions", {})
+    device_facts = state["device_facts"]
     settings = state["settings"]
+    test_data = state.get("test_data", {})
     
     if not fault_summary:
         logger.warning("No fault summary found in state")
         return state
     
+    # Handle test mode - load test data if test_mode is enabled
+    if settings.get("test_mode", False) and test_data:
+        if "custom_instructions" in test_data:
+            # Use custom instructions from test data if provided
+            custom_instructions = test_data["custom_instructions"]
+            logger.info(f"Using custom instructions from test_{settings['test_name']}.yml")
+
     # Create dependencies for the action planner
     deps = ActionPlannerDependencies(
         fault_summary=fault_summary,
+        custom_instructions=custom_instructions,
+        device_facts=device_facts,
         settings=settings,
         logger=logger
     )
@@ -158,8 +337,13 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     # Generate human-readable output for the writer with Markdown formatting
     steps_markdown = []
     for i, step in enumerate(action_plan):
+        # Format commands as a bulleted list
+        commands_list = "\n".join([f"  - `{cmd}`" for cmd in step.commands]) if step.commands else "  - None"
+        
         steps_markdown.append(f"""### Step {i+1}: {step.description}
-- **📟 Command:** `{step.command}`
+- **🔄 Action Type:** {step.action_type}
+- **📟 Commands:** 
+{commands_list}
 - **🔍 Expected Output:** {step.output_expectation}
 - **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
 """)
@@ -175,8 +359,215 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     return {
         **state,
         "action_plan": action_plan,
+        "action_plan_remaining": action_plan,
+        "action_plan_history": [],
         "current_step_index": 0
     }
+
+async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState | Command[Literal["action_executor", "result_summary"]]:
+    """Router node that manages action plan workflow and handles approval requirements."""
+    logger.info("Running action router node")
+    
+    # 1. Update action_plan_history by appending the latest executed step
+    action_plan_history = state.get("action_plan_history", [])
+    action_plan_remaining = state.get("action_plan_remaining", [])
+    settings = state.get("settings", {})
+
+    current_step= state.get("current_step", None)
+    current_step_index = state.get("current_step_index", 0)
+    
+    # 2. If there is a current_step and an analysis report, add the executed step to history and set next_action_type
+    if current_step and current_step.analysis_report:
+        action_plan_history.append(current_step)
+        # Increment the current step index to move to the next step
+        next_action_type = current_step.analysis_report.next_action_type
+
+        # 3. If next_action_type is "resolve" or "escalate", route to result summary
+        if next_action_type == "escalate":
+            writer("\n⚠️ **Escalation detected. Routing to result summary.**\n")
+            # Use Command to route to the result_summary node
+            return Command(
+                update={
+                    "action_plan_history": action_plan_history,
+                },
+                goto="result_summary"
+            )
+        elif next_action_type == "resolve":
+            writer("\n✅ **Resolution detected. Routing to result summary.**\n")
+            # Use Command to route to the result_summary node
+            return Command(
+                update={
+                    "action_plan_history": action_plan_history,
+                },
+                goto="result_summary"
+            )
+        else:
+            # Increment step index to indicate that we will move to the next step in the action plan
+            current_step_index += 1
+            # Check if max_steps limit has been exceeded
+            max_steps = settings.get("max_steps", 15)
+            if current_step_index > max_steps:
+                logger.warning(f"Maximum step count of {max_steps} has been exceeded")
+                writer(f"\n⚠️ **Maximum step count of {max_steps} has been exceeded. Escalating for human intervention.**\n")
+                
+                if current_step:
+                    # Create an analysis report to indicate the step limit was exceeded
+                    current_step.analysis_report = ActionAnalysisReport(
+                        analysis=[f"Maximum step count of {max_steps} has been exceeded"],
+                        findings=[f"Workflow exceeded maximum allowed steps ({max_steps})"],
+                        next_action_type="escalate",
+                        next_action_reason=f"Maximum step count of {max_steps} has been exceeded. Escalating for human intervention."
+                    )
+                    action_plan_history.append(current_step)
+                
+                # Route to result_summary
+                return Command(
+                    update={
+                        "action_plan_history": action_plan_history,
+                    },
+                    goto="result_summary"
+                )
+
+    # Check if we have steps remaining
+    if not action_plan_remaining:
+        writer("⚠️ **No more steps to execute. Routing to result summary.**")
+        # Use Command to route to the result_summary node
+        return Command(
+            update={
+                "action_plan_history": action_plan_history,
+                "action_plan_remaining": action_plan_remaining,
+                "current_step": current_step
+            },
+            goto="result_summary"
+        )
+    
+    # 3. Check device reachability
+    device_facts = state["device_facts"]
+    if not device_facts.get("reachable", False):
+        writer("⚠️ **Device is unreachable. Routing to result summary.**")
+        # Use Command to route to the result_summary node
+        return Command(
+            update={
+                "action_plan_history": action_plan_history,
+                "action_plan_remaining": action_plan_remaining,
+                "current_step_index": current_step_index,
+                "current_step": current_step
+            },
+            goto="result_summary"
+        )
+    
+    # 4. Get current_step
+    current_step = action_plan_remaining[0]
+    # Remove the current step from the remaining steps
+    action_plan_remaining = action_plan_remaining[1:]
+    # Set current_step in state for persistence during human interrupt
+    state["current_step"] = current_step
+    
+    # 5. Write step details for review
+    commands_text = "\n".join([f"- `{cmd}`" for cmd in current_step.commands]) if current_step.commands else "- No commands"
+    # TODO: Update this to use the same format as the action analyzer
+    writer(f"""## ⚡ Executing Step {current_step_index + 1}
+    
+**Step Description:** {current_step.description}
+
+**Action Type:** {current_step.action_type}
+
+**Commands to Execute:**
+{commands_text}
+
+**Expected Output:** {current_step.output_expectation}
+
+**Requires Approval:** {"Yes" if current_step.requires_approval else "No"}
+""")
+    
+    # 6. If action type is escalation, route to result summary
+    if current_step.action_type == "escalation":
+        writer("⚠️ **Escalation step detected. Routing to result summary.**")
+        # Set current_step.analysis_report to reflect the escalation
+        current_step.analysis_report = ActionAnalysisReport(
+            analysis="No analysis performed due to escalation",
+            findings=[],
+            next_action_type="escalate",
+            next_action_reason="",
+        )
+        
+        action_plan_history.append(current_step)
+        # Use Command to route to the result_summary node
+        return Command(
+            update={
+                "action_plan_history": action_plan_history,
+                "action_plan_remaining": action_plan_remaining,
+                "current_step_index": current_step_index,
+                "current_step": current_step
+            },
+            goto="result_summary"
+        )
+
+
+    # 6. Check if approval is required and prompt user if needed
+    if current_step.requires_approval:
+        writer("\n\n⚠️ **This step requires approval. Waiting for user confirmation...**")
+        # Please respond with "yes" or "no" to approve or reject the action
+        writer("\n**Please respond with *yes* or *no* to approve or reject the action.**\n\n")
+
+        # Create a list of valid "yes" responses
+        yes_responses = ["yes", "y", "true", "approve", "1"]
+        # Create a list of valid "no" responses
+        no_responses = ["no", "n", "false", "reject", "0"]
+        # While loop to ensure valid response
+        response = None
+        while response not in yes_responses and response not in no_responses:
+
+            # Use interrupt to retrieve response from user
+            response_text = interrupt({})
+            
+            # 7-8. Handle user approval response
+            if response_text.lower().strip() in yes_responses:
+                writer("✅ **Action approved by user. Proceeding to execution.**")
+                return Command(
+                    update={
+                        "action_plan_history": action_plan_history,
+                        "action_plan_remaining": action_plan_remaining,
+                        "current_step_index": current_step_index,
+                        "current_step": current_step
+                    },
+                    goto="action_executor"
+                )
+            elif response_text.lower().strip() in no_responses:
+                writer("🛑 **Action rejected by user. Routing to result summary.**")
+                current_step.analysis_report = ActionAnalysisReport(
+                    analysis="No analysis performed due to action being rejected by user.",
+                    findings=[],
+                    next_action_type="escalate",
+                    next_action_reason="Action rejected by user.",
+                )
+            
+                action_plan_history.append(current_step)
+                return Command(
+                    update={
+                        "action_plan_history": action_plan_history,
+                        "action_plan_remaining": action_plan_remaining,
+                        "current_step_index": current_step_index,
+                        "current_step": current_step
+                    },
+                    goto="result_summary"
+                )
+            else:
+                writer("❌ **Invalid response. Please respond with *yes* or *no*.**")
+                # Reset response to prompt again
+                response = None
+    
+    # 9. No approval required, proceed to executor
+    writer("\n\n✅ **No approval required. Proceeding to execution.**\n\n")
+    return Command(
+        update={
+            "action_plan_history": action_plan_history,
+            "action_plan_remaining": action_plan_remaining,
+            "current_step_index": current_step_index,
+            "current_step": current_step
+        },
+        goto="action_executor"
+    )
 
 # Function to run the action executor agent
 async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
@@ -184,72 +575,73 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     logger.info("Running action executor agent")
     
     # Get the action plan and current step index from the state
-    action_plan = state["action_plan"]
-    current_step_index = state["current_step_index"]
-    device_credentials = state["device_credentials"]
+    action_plan_remaining = state["action_plan_remaining"]
+    action_executor_history = state.get("action_executor_history", [])
+    device_driver = state["device_driver"]
+    device_facts = state["device_facts"]
     settings = state["settings"]
     test_data = state.get("test_data", {})
     
-    if not action_plan or current_step_index >= len(action_plan):
-        logger.warning("No more steps to execute in the action plan")
-        return state
+    # if not action_plan or current_step_index >= len(action_plan):
+    #     logger.warning("No more steps to execute in the action plan")
+    #     return state
     
     # Get the current step to execute
-    current_step = action_plan[current_step_index]
+    current_step = state["current_step"]
     
     # Handle test mode - use command output from test data
     if settings.get("test_mode", False) and test_data:
-        command = current_step.command
+        commands = current_step.commands
         # Get command output from test data or use default message
-        command_output = test_data.get("commands", {}).get(command, "Output not available")
+        #command_output = test_data.get("commands", {}).get(commands, "Output not available")
         
         # Create simulated result structure
-        simulated_output = [{"cmd": command, "output": command_output}]
-        
-        # Generate human-readable output with Markdown formatting
-        writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)} (Test Mode)
+        simulated_output = []
+        for command in commands:
+            command_output = test_data.get("commands", {}).get(command, "Output not available")
+            simulated_output.append({"cmd": command, "output": command_output})
 
-**Command:** `{current_step.command}`
-
-### Output:
-```
-{command_output}
-```
-
-### Status:
-✅ **No errors encountered**
-""")
-        
-        # Update the state with the test execution result
-        return {
-            **state,
-            "execution_result": {
-                "command_outputs": simulated_output,
-                "simulation_mode": False,
-                "errors": []
-            }
+        description = current_step.description
+        command_outputs = simulated_output
+        errors = []
+        execution_result = {
+            "description": description,
+            "command_outputs": command_outputs,
+            "errors": errors
         }
-    
-    # Create dependencies for the action executor
-    deps = ActionExecutorDeps(
-        current_action=current_step,
-        settings=settings,
-        device=device_credentials,
-        client=AsyncClient(),
-        logger=logger
-    )
-    
-    # Run the action executor agent for the current step
-    result = await run_action_executor(deps=deps)
+        
+    else: 
+        # Create dependencies for the action executor
+        deps = ActionExecutorDeps(
+            current_step=current_step,
+            device_driver=device_driver,
+            device_facts=device_facts,
+            settings=settings,
+            logger=logger
+        )
+        
+        # Run the action executor agent for the current step
+        result = await run_action_executor(deps=deps)
 
-    # Format the command outputs and errors with Markdown
+        execution_result = result.output
+        description = execution_result.description
+        command_outputs = execution_result.command_outputs
+        errors = execution_result.errors
+
+    
+    
+    # Format the commands, their outputs, and errors with Markdown
+    commands_md = ""
+    for cmd in command_outputs:
+        commands_md += f"- `{cmd['cmd']}`\n"    
+
     command_outputs_md = ""
-    for output in result.output.command_outputs:
+    for output in command_outputs:
         command_outputs_md += f"```\n{output['output']}\n```\n"
     
     errors_md = ""
-    if result.output.errors:
-        for error in result.output.errors:
+    if errors:
+        for error in errors:
             errors_md += f"- ❌ **Error:** {error}\n"
     else:
         errors_md = "✅ **No errors encountered**"
@@ -258,31 +650,37 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
     mode_text = ""
     if settings.get("simulation_mode", True):
         mode_text = "**⚠️ SIMULATION MODE ⚠️**"
+    elif settings.get("test_mode", False):
+        mode_text = "**✅ TEST MODE**"
     else:
         mode_text = "**🔄 ACTUAL EXECUTION**"
         
-    writer(f"""## 🔧 Executing Action {current_step_index+1}/{len(action_plan)}
+    writer(f"""## 🔧 Executing Action
 
-**Command:** `{current_step.command}`
+**Description:** 
+{description}
+
+**Commands:** 
+{commands_md}
 
 {mode_text}
 
 ### Output:
 {command_outputs_md}
 
-### Status:
+### Status: 
 {errors_md}
 """)
+
+    action_executor_history.append(execution_result)
     
     # Update the state with the execution result
     return {
         **state,
-        "execution_result": {
-            "command_outputs": result.output.command_outputs,
-            "simulation_mode": result.output.simulation_mode,
-            "errors": result.output.errors
-        }
+        "execution_result": execution_result,
+        "action_executor_history": action_executor_history
     }
+
 
 # Function to run the action analyzer agent
 async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
@@ -290,32 +688,24 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
     logger.info("Running action analyzer agent")
     
     # Get the necessary state data
-    action_plan = state["action_plan"]
+    action_plan_history = state["action_plan_history"]
+    action_plan_remaining = state["action_plan_remaining"]
     current_step_index = state["current_step_index"]
+    current_step = state["current_step"]
     execution_result = state["execution_result"]
     fault_summary = state["fault_summary"]
+    device_facts = state["device_facts"]
     settings = state["settings"]
-    
-    if not action_plan or not execution_result:
-        logger.warning("Missing action plan or execution result in state")
-        return state
-    
-    # Get the current step
-    current_step = action_plan[current_step_index]
-    
-    # Create the executor output object for the analyzer
-    executor_output = type('ActionExecutorOutput', (), {
-        'command_outputs': execution_result["command_outputs"],
-        'simulation_mode': execution_result["simulation_mode"],
-        'errors': execution_result["errors"]
-    })
     
     # Create dependencies for the action analyzer
     deps = ActionAnalyzerDependencies(
-        executor_output=executor_output,
-        action_plan=action_plan,
-        fault_summary=fault_summary,
+        action_plan_history=action_plan_history,
+        action_plan_remaining=action_plan_remaining,
+        current_step_index=current_step_index,
         current_step=current_step,
+        execution_result=execution_result,
+        fault_summary=fault_summary,
+        device_facts=device_facts,
         settings=settings,
         logger=logger
     )
@@ -324,68 +714,120 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
     result = await run_action_analyzer(deps=deps)
     analysis_report = result.output
     
-    # Format findings, issues and recommendations with Markdown
-    key_findings_md = ""
-    if analysis_report.key_findings:
-        for finding in analysis_report.key_findings:
-            key_findings_md += f"- {finding}\n"
+    # Format findings and analysis with Markdown
+    analysis_md = analysis_report.analysis if analysis_report.analysis else "No analysis provided"
+    
+    findings_md = ""
+    if analysis_report.findings:
+        for finding in analysis_report.findings:
+            findings_md += f"- {finding}\n"
     else:
-        key_findings_md = "- No findings reported\n"
-        
-    issues_md = ""
-    if analysis_report.issues_identified:
-        for issue in analysis_report.issues_identified:
-            issues_md += f"- {issue}\n"
-    else:
-        issues_md = "- No issues identified\n"
-        
-    recommendations_md = ""
-    if analysis_report.recommendations:
-        for rec in analysis_report.recommendations:
-            recommendations_md += f"- {rec}\n"
-    else:
-        recommendations_md = "- No specific recommendations\n"
+        findings_md = "- No findings reported\n"
+    
+    next_action_type = analysis_report.next_action_type
+    next_action_reason = analysis_report.next_action_reason
     
     # Generate human-readable output for the writer with Markdown formatting
+    commands_text = "\n".join([f"- `{cmd}`" for cmd in current_step.commands]) if current_step.commands else "- No commands"
     writer(f"""## 📋 Analysis of Step {current_step_index+1} Results
 
-**Command Analyzed:** `{current_step.command}`
+**Commands Analyzed:**
+{commands_text}
 
-### 📝 Key Findings:
-{key_findings_md}
+### 📊 Analysis:
+{analysis_md}
 
-### ⚠️ Issues Identified:
-{issues_md}
+### 🔍 Key Findings:
+{findings_md}
 
-### 🔮 Recommendations:
-{recommendations_md}
+### 🔄 Next Action:
+- **Type:** {next_action_type}
+- **Reason:** {next_action_reason}
 
-**🎯 Confidence Level:** {analysis_report.confidence_level}
+
 """)
 
-    # Increment the current step index to move to the next step
-    next_step_index = current_step_index + 1
+    if next_action_type == "new_action":
+        action_plan_remaining = analysis_report.updated_action_plan_remaining
+        # Generate human-readable output for the writer with Markdown formatting
+        steps_markdown = []
+        for i, step in enumerate(action_plan_remaining):
+            # Format commands as a bulleted list
+            commands_list = "\n".join([f"  - `{cmd}`" for cmd in step.commands]) if step.commands else "  - None"
+            
+            steps_markdown.append(f"""### Step {current_step_index+i+1}: {step.description}
+- **🔄 Action Type:** {step.action_type}
+- **📟 Commands:** 
+{commands_list}
+- **🔍 Expected Output:** {step.output_expectation}
+- **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
+""")
     
-    # Update the state with the analysis report and next step index
+        writer(f"""## 🔍 Action Plan Has Been Updated Based Upon Findings
+
+**Remaining Steps:** {len(action_plan_remaining)}
+
+{''.join(steps_markdown)}
+""")
+
+    # Populate the analysis_report for the current step
+    current_step.analysis_report = analysis_report
+
+    # Update the state with the analysis report and latest action plan
     return {
         **state,
-        "analysis_report": analysis_report,
-        "current_step_index": next_step_index
+        "current_step": current_step,
+        "action_plan_remaining": action_plan_remaining
     }
 
-# Function to check if we should continue with the next step or end the workflow
-def should_continue_or_end(state: NetworkTroubleshootingState, writer) -> str:
-    """Decide whether to continue with the next step or end the workflow."""
-    action_plan = state["action_plan"]
-    current_step_index = state["current_step_index"]
+async def run_result_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
+    """Generate a summary of troubleshooting results."""
+    logger.info("Running result summary node")
     
-    if not action_plan or current_step_index >= len(action_plan):
-        logger.info("No more steps to execute, ending workflow")
-        writer("No more steps to execute, ending workflow")
-        return "end"
-    else:
-        logger.info(f"Moving to next step: {current_step_index + 1}/{len(action_plan)}")
-        return "continue"
+    writer("""## 📋 Troubleshooting Results Summary
+    
+**This is a stub implementation of the result_summary node.**
+
+This node will provide a comprehensive summary of all troubleshooting actions performed,
+including successful and failed steps, and recommendations for next actions.
+""")
+    
+    return {
+        **state,
+        # Reset the NetworkTroubleshootingState to its initial state for future executions
+        "latest_user_message": None,
+        "messages": [],
+        "inventory": {},
+        "alert_raw_data": None,
+        "fault_summary": None,
+        "action_plan": [],
+        "action_plan_remaining": [],
+        "action_plan_history": [],
+        "current_step_index": 0,
+        "current_step": None,
+        "custom_instructions": None,
+        "action_executor_history": [],
+        "execution_result": {},
+        "analysis_report": None,
+        "device_driver": None,
+        "device_facts": {},
+        "settings": {},
+        "test_data": {}
+    }
+
+# # Function to check if we should continue with the next step or end the workflow
+# def should_continue_or_end(state: NetworkTroubleshootingState, writer) -> str:
+#     """Decide whether to continue with the next step or end the workflow."""
+#     action_plan = state["action_plan"]
+#     current_step_index = state["current_step_index"]
+    
+#     if not action_plan or current_step_index >= len(action_plan):
+#         logger.info("No more steps to execute, ending workflow")
+#         writer("No more steps to execute, ending workflow")
+#         return "end"
+#     else:
+#         logger.info(f"Moving to next step: {current_step_index + 1}/{len(action_plan)}")
+#         return "continue"
 
 # Build and compile the graph
 def build_graph() -> StateGraph:
@@ -395,25 +837,33 @@ def build_graph() -> StateGraph:
     
     # Add nodes for each agent
     builder.add_node("fault_summary_node", run_fault_summary_node)
+    builder.add_node("init_deps", run_init_deps_node)
     builder.add_node("action_planner", run_action_planner_node)
+    builder.add_node("action_router", run_action_router_node)
     builder.add_node("action_executor", run_action_executor_node)
     builder.add_node("action_analyzer", run_action_analyzer_node)
+    builder.add_node("result_summary", run_result_summary_node)
     
     # Add edges to connect the nodes
     builder.add_edge(START, "fault_summary_node")
-    builder.add_edge("fault_summary_node", "action_planner")
-    builder.add_edge("action_planner", "action_executor")
+    builder.add_edge("fault_summary_node", "init_deps")
+    builder.add_edge("init_deps", "action_planner")
+    builder.add_edge("action_planner", "action_router")
+    
+    # Let action_router use Command objects for dynamic routing
     builder.add_edge("action_executor", "action_analyzer")
+    builder.add_edge("action_analyzer", "action_router")
+    builder.add_edge("result_summary", END)
     
     # Add conditional logic for looping or ending the workflow
-    builder.add_conditional_edges(
-        "action_analyzer",
-        should_continue_or_end,
-        {
-            "continue": "action_executor",
-            "end": END
-        }
-    )
+    # builder.add_conditional_edges(
+    #     "action_analyzer",
+    #     should_continue_or_end,
+    #     {
+    #         "continue": "action_executor",
+    #         "end": END
+    #     }
+    # )
     
     return builder
 

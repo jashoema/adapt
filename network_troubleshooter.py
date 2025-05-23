@@ -65,11 +65,10 @@ async def main():
         print(f"Alert Title: {fault_summary.title}")
         print(f"Alert Summary: {fault_summary.summary}")
         print(f"Target Device: {fault_summary.hostname}")
-        print(f"Operating System: {fault_summary.operating_system}")
         print(f"Timestamp: {fault_summary.timestamp}")
         print(f"Severity: {fault_summary.severity}")
         print("\nOriginal Alert Details:")
-        print(json.dumps(fault_summary.original_alert_details, indent=2))
+        print(json.dumps(fault_summary.metadata, indent=2))
         print("=" * 60)
     elif choice == "3":
         print("Describe the network fault for troubleshooting:")
@@ -78,7 +77,7 @@ async def main():
         # Create a new FaultSummary with the user input as the summary
         network_fault_summary = FaultSummary(
             summary=user_input,
-            original_alert_details={"source": "user_input", "raw_text": user_input}
+            metadata={"source": "user_input", "raw_text": user_input}
         )
         
         # Create dependencies for the action planner
@@ -98,8 +97,12 @@ async def main():
             approval_status = "⚠️  REQUIRES APPROVAL" if step.requires_approval else "✓  SAFE TO EXECUTE"
             print(f"\nStep {i}: {step.description}")
             print(f"Status: {approval_status}")
-            print(f"\nCommand to execute:")
-            print(f"  {step.command}")
+            print(f"\nCommands to execute:")
+            if step.commands:
+                for cmd in step.commands:
+                    print(f"  {cmd}")
+            else:
+                print("  No commands to execute")
             print(f"\nExpected output:")
             print(f"  {step.output_expectation}")
             print("-" * 40)
@@ -135,20 +138,11 @@ async def main():
         except EOFError:
             pass
         
-        # Setup device credentials from environment variables
-        device_credentials = DeviceCredentials(
-            hostname=os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-            device_type=os.getenv("DEVICE_TYPE", "cisco_ios"),
-            username=os.getenv("DEVICE_USERNAME", "admin"),
-            password=os.getenv("DEVICE_PASSWORD", "password"),
-            port=int(os.getenv("DEVICE_PORT", "22")),
-            secret=os.getenv("DEVICE_SECRET", None)
-        )
-        
         # Create a dummy TroubleshootingStep for execution
         action = TroubleshootingStep(
             description="Execute CLI command",
-            command="\n".join(commands),
+            action_type="diagnostic",
+            commands=commands,
             output_expectation="Command should execute successfully",
             requires_approval=False
         )
@@ -157,8 +151,6 @@ async def main():
         deps = ActionExecutorDeps(
             current_action=action,
             simulation_mode=simulation_mode,
-            device=device_credentials,
-            client=AsyncClient(),
             settings=settings
         )
         

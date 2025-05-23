@@ -2,15 +2,15 @@ from __future__ import annotations as _annotations
 
 import os
 import logging
+import json
 from dataclasses import dataclass
 from typing import Any, List, Dict, Optional, TypedDict
 
-from httpx import AsyncClient
 from pydantic_ai import Agent, RunContext, ModelRetry
 
-from .agent_tools import execute_cli_command, execute_cli_config
-from .agent_prompts import SYSTEM_PROMPT, TASK_PROMPT
-from ..action_planner.agent import TroubleshootingStep
+from .agent_tools import execute_cli_commands, execute_cli_config
+from .agent_prompts import SYSTEM_PROMPT
+from ..models import DeviceCredentials, CommandOutput, ActionExecutorOutput, TroubleshootingStep
 
 import logfire
 
@@ -25,40 +25,18 @@ logfire.instrument_openai()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("action_executor.agent")
 
-@dataclass
-class DeviceCredentials:
-    hostname: str
-    device_type: str
-    username: str
-    password: str
-    port: int = 22
-    secret: str | None = None  # For enable/privileged mode
-    # Add more fields as required for different device types
-
-class CommandOutput(TypedDict):
-    cmd: str
-    output: str
-
-@dataclass
-class ActionExecutorOutput:
-    """Output from the action executor agent"""
-    command_outputs: list[CommandOutput]  # List of command:output pairs
-    simulation_mode: bool
-    errors: Optional[List[str]] = None
-
-@dataclass
 class ActionExecutorDeps:
-    current_action: TroubleshootingStep
-    device: DeviceCredentials
-    client: AsyncClient  # For Pydantic AI usage, potential future tool integration
-    settings: Dict[str, bool] = None
+    current_step: TroubleshootingStep
+    device_driver: Dict[str, Any]
+    device_facts: Dict[str, Any]
+    settings: Dict[str, bool]
     logger: Optional[Any] = None
     
 # Main Agent
 action_executor = Agent(
-    "openai:gpt-4o",
+    "openai:gpt-4.1-mini",
     system_prompt=SYSTEM_PROMPT,
-    tools=[execute_cli_command, execute_cli_config],
+    tools=[execute_cli_commands, execute_cli_config],
     deps_type=ActionExecutorDeps,
     output_type=ActionExecutorOutput,
     retries=2,
@@ -84,38 +62,19 @@ async def run(deps: ActionExecutorDeps) -> RunContext:
     # Log debug information if debug mode is enabled
     if deps.settings.get("debug_mode", False) and deps.logger:
         deps.logger.info("Action Executor Agent System Prompt", extra={
-            "system_prompt": SYSTEM_PROMPT,
-            "task_prompt": TASK_PROMPT
+            "system_prompt": SYSTEM_PROMPT
         })
     
+    current_step = deps.current_step
     simulation = deps.settings.get("simulation_mode", True)
-    device = deps.device.__dict__
-    commands = deps.current_action.command.splitlines()  # Split user input into multiple commands
+    device_facts = deps.device_facts
 
-    for command in commands:
-        if deps.settings.get("debug_mode", False) and deps.logger:
-            deps.logger.info(f"Executing command", extra={
-                "command": command,
-                "simulation_mode": simulation,
-                "device": device['hostname']
-            })
+    # Format the input for the user prompt
+    formatted_input = f"device_facts:\n{json.dumps(device_facts)}\n\n"
+    formatted_input += f"current_step:\n{json.dumps(current_step)}\n\n"
+    formatted_input += f"simulation_mode: {simulation}\n\n"
 
-    # Create a more descriptive user prompt to guide the agent about simulation mode
-    user_prompt = f"""
-    Execute the following commands on the network device:
-    
-    {commands if commands else "No command provided."}
-    
-    Device Information:
-    - Hostname: {device['hostname']}
-    - Device Type: {device['device_type']}
-    - Port: {device['port']}
-    
-    simulation_mode: {simulation}
-    
-    REMEMBER: If simulation_mode is TRUE, you must generate realistic device output yourself.
-    If simulation_mode is FALSE, you should use the appropriate tool to execute commands on the real device.
-    """
+    user_prompt = formatted_input
     
     if deps.settings.get("debug_mode", False) and deps.logger:
         deps.logger.info("User prompt for Action Executor", extra={
