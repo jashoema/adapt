@@ -91,6 +91,11 @@ st.set_page_config(
 def get_thread_id():
     return str(uuid.uuid4())
 
+# Add a function to reset the thread_id cache when needed
+def reset_thread_id():
+    get_thread_id.clear()
+    return get_thread_id()
+
 thread_id = get_thread_id()
 
 async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = None):
@@ -147,7 +152,7 @@ with st.sidebar:
     # Add toggles for settings
     st.header("Settings")
     simulation_mode = st.toggle("Simulation Mode", value=st.session_state.settings["simulation_mode"], help="Enable simulation mode to run commands without actual execution")
-    debug_mode = st.toggle("Debug Mode", value=st.session_state.settings["debug_mode"], help="Enable debug mode for additional logging and information")
+    debug_mode = st.toggle("Debug Mode", value=st.session_state.settings["debug_mode"], disabled=True, help="Enable debug mode for additional logging and information")
 
     # Test mode toggle and test scenario selection
     test_mode = st.toggle("Test Mode", value=st.session_state.settings["test_mode"], 
@@ -171,6 +176,17 @@ with st.sidebar:
             if not test_name and st.session_state.settings["test_name"]:
                 if st.session_state.settings["test_name"] in available_tests:
                     test_name = st.session_state.settings["test_name"]
+            
+            # Add Run Test button if a test scenario is selected
+            if test_name:
+                run_test_button = st.button("Run Test", key="run_test_button", help="Run the selected test scenario")
+                if run_test_button:
+                    st.session_state.settings["test_name"] = test_name
+                    st.session_state.test_user_input = f"Run test scenario: {test_name}"
+                    st.session_state.messages = []
+                    # Reset the thread_id to make sure we get rid of any stale state data for the graph
+                    thread_id = reset_thread_id()
+                    st.rerun()
             
             # # Show test file preview
             # with st.expander("Test Scenario Preview"):
@@ -245,21 +261,26 @@ with st.sidebar:
     
     st.divider()
 
+    if st.button("Reset Chat History", key="clear_chat"):
+        st.session_state.messages = []
+        thread_id = reset_thread_id()
+        st.rerun()
+
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
     st.markdown("### 👋 Hello World Agent")
     st.markdown("This is a simple hello-world agent that responds with a friendly greeting.")
-elif agent_type == "Fault Summarizer":
+elif agent_type == "Fault Summarizer Agent":
     st.markdown("### 🔧 Fault Summarizer")
     st.markdown("Describe a network fault, and this agent will analyze and summarize the issue.")
-elif agent_type == "Network Troubleshooting Planner":
+elif agent_type == "Action Planner Agent":
     st.markdown("### 🔍 Network Troubleshooting Planner")
     st.markdown("Provide a summary of a network fault, and this agent will create a detailed troubleshooting plan with specific commands to execute.")
-elif agent_type == "Action Analyzer":
+elif agent_type == "Action Analyzer Agent":
     st.markdown("### 📊 Action Analyzer")
     st.markdown("This agent analyzes the output of network commands and provides structured insights, findings, and recommendations.")
     st.info("Enter a network command output to analyze, or paste the full output of a previous command execution.")
-elif agent_type == "Multi-Agent":
+elif agent_type == "Full Multi-Agent Workflow":
     st.markdown("### 🔄 Multi-Agent Network Troubleshooter")
     st.markdown("This workflow connects all agents together using LangGraph to provide end-to-end network troubleshooting.")
     st.markdown("Describe a network issue, and the workflow will run through these steps:")
@@ -319,6 +340,10 @@ if "current_agent" not in st.session_state or st.session_state.current_agent != 
 if "current_response" not in st.session_state:
     st.session_state.current_response = None
 
+# Initialize test_user_input if it doesn't exist
+if "test_user_input" not in st.session_state:
+    st.session_state.test_user_input = None
+
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -326,6 +351,9 @@ for message in st.session_state.messages:
 
 # User input
 user_input = st.chat_input("Say something to the agent...")
+if st.session_state.test_user_input:
+    user_input = st.session_state.test_user_input
+    st.session_state.test_user_input = None  # Clear the test input after using it
 
 # Handle user input
 if user_input:
@@ -364,7 +392,7 @@ if user_input:
                     # Pass the dependencies to the agent
                     result = await run_hello_world(user_input, deps=hello_world_deps)
                     return result.output
-                elif agent_type == "Multi-Agent":
+                elif agent_type == "Full Multi-Agent Workflow":
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Multi-Agent Workflow", extra={"user_input": user_input})
                     
@@ -386,7 +414,7 @@ if user_input:
                         f.write(response_content)
 
                     return response_content
-                elif agent_type == "Fault Summarizer":
+                elif agent_type == "Fault Summarizer Agent":
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Fault Summarizer Agent", extra={"user_input": user_input})
                     
@@ -421,7 +449,7 @@ if user_input:
 
                     """
                     return formatted_output
-                elif agent_type == "Network Troubleshooting Planner":
+                elif agent_type == "Action Planner Agent":
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Network Troubleshooting Planner Agent", extra={"user_input": user_input})
                     
@@ -459,7 +487,7 @@ if user_input:
                         formatted_output += "---\n\n"
                     
                     return formatted_output
-                elif agent_type == "Action Analyzer":
+                elif agent_type == "Action Analyzer Agent":
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Action Analyzer Agent", extra={"user_input": user_input})
                     

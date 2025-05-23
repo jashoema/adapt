@@ -34,7 +34,7 @@ class ActionExecutorDeps:
     
 # Main Agent
 action_executor = Agent(
-    "openai:gpt-4o",
+    "openai:gpt-4.1-mini",
     system_prompt=SYSTEM_PROMPT,
     tools=[execute_cli_commands, execute_cli_config],
     deps_type=ActionExecutorDeps,

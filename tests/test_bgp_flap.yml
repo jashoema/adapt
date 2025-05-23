@@ -16,9 +16,10 @@ custom_instructions: |
   General instructions:
     - Always talk like a pirate
   Troubleshooting instructions:
-    1. Check the BGP neighbor state and logs to see if the neighbor is flapping.
-    2. Check the interface status and logs to see if there are any errors or issues.
-    3. Stop troubleshooting and escalate to the network team.
+    1. Isolate the device by changing BGP metrics
+    2. Check the BGP neighbor state and logs to see if the neighbor is flapping.
+    3. Check the interface status and logs to see if there are any errors or issues.
+    4. Stop troubleshooting and escalate to the network team.
 
 commands:
   # Command outputs that will be returned when in test mode

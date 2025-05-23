@@ -171,10 +171,11 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
         test_name = settings.get("test_name", "")
         if test_name:
             test_data = load_test_data(test_name)
-            if test_data and "alert_payload" in test_data:
-                # Use the test alert payload as input instead of user message
-                alert_raw_data = test_data["alert_payload"]
-                logger.info(f"Using test alert payload from test_{test_name}.yml")
+            if test_data:
+                if "alert_payload" in test_data:
+                    # Use the test alert payload as input instead of user message
+                    alert_raw_data = test_data["alert_payload"]
+                    logger.info(f"Using test alert payload from test_{test_name}.yml")
     
     # Create dependencies for the fault summary agent
     fault_summary_deps = FaultSummaryDependencies(
@@ -307,11 +308,19 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     custom_instructions = state.get("custom_instructions", {})
     device_facts = state["device_facts"]
     settings = state["settings"]
+    test_data = state.get("test_data", {})
     
     if not fault_summary:
         logger.warning("No fault summary found in state")
         return state
     
+    # Handle test mode - load test data if test_mode is enabled
+    if settings.get("test_mode", False) and test_data:
+        if "custom_instructions" in test_data:
+            # Use custom instructions from test data if provided
+            custom_instructions = test_data["custom_instructions"]
+            logger.info(f"Using custom instructions from test_{settings['test_name']}.yml")
+
     # Create dependencies for the action planner
     deps = ActionPlannerDependencies(
         fault_summary=fault_summary,
@@ -457,7 +466,7 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
     # 5. Write step details for review
     commands_text = "\n".join([f"- `{cmd}`" for cmd in current_step.commands]) if current_step.commands else "- No commands"
     # TODO: Update this to use the same format as the action analyzer
-    writer(f"""## ⚡ Action Router - Step Review
+    writer(f"""## ⚡ Executing Step {current_step_index + 1}
     
 **Step Description:** {current_step.description}
 
@@ -476,9 +485,9 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
         writer("⚠️ **Escalation step detected. Routing to result summary.**")
         # Set current_step.analysis_report to reflect the escalation
         current_step.analysis_report = ActionAnalysisReport(
-            analysis=["No analysis performed due to escalation"],
+            analysis="No analysis performed due to escalation",
             findings=[],
-            next_action_type=["escalate"],
+            next_action_type="escalate",
             next_action_reason="",
         )
         
@@ -494,52 +503,59 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
             goto="result_summary"
         )
 
+
     # 6. Check if approval is required and prompt user if needed
     if current_step.requires_approval:
         writer("\n\n⚠️ **This step requires approval. Waiting for user confirmation...**")
-        
-        # Use interrupt with the detailed payload
-        response_text = interrupt({})
-        
-        # Convert string response to boolean
-        # Accept various forms of "yes" as approval
-        if isinstance(response_text, str):
-            response = response_text.lower().strip() in ["yes", "y", "true", "approve", "1"]
-        else:
-            # Handle case where response might already be a boolean
-            response = bool(response_text)
-        
-        # 7-8. Handle user approval response
-        if response:
-            writer("✅ **Action approved by user. Proceeding to execution.**")
-            return Command(
-                update={
-                    "action_plan_history": action_plan_history,
-                    "action_plan_remaining": action_plan_remaining,
-                    "current_step_index": current_step_index,
-                    "current_step": current_step
-                },
-                goto="action_executor"
-            )
-        else:
-            writer("🛑 **Action rejected by user. Routing to result summary.**")
-            current_step.analysis_report = ActionAnalysisReport(
-                analysis=["No analysis performed due to action being rejected by user"],
-                findings=[],
-                next_action_type=["escalate"],
-                next_action_reason="",
-            )
-        
-            action_plan_history.append(current_step)
-            return Command(
-                update={
-                    "action_plan_history": action_plan_history,
-                    "action_plan_remaining": action_plan_remaining,
-                    "current_step_index": current_step_index,
-                    "current_step": current_step
-                },
-                goto="result_summary"
-            )
+        # Please respond with "yes" or "no" to approve or reject the action
+        writer("\n**Please respond with *yes* or *no* to approve or reject the action.**\n\n")
+
+        # Create a list of valid "yes" responses
+        yes_responses = ["yes", "y", "true", "approve", "1"]
+        # Create a list of valid "no" responses
+        no_responses = ["no", "n", "false", "reject", "0"]
+        # While loop to ensure valid response
+        response = None
+        while response not in yes_responses and response not in no_responses:
+
+            # Use interrupt to retrieve response from user
+            response_text = interrupt({})
+            
+            # 7-8. Handle user approval response
+            if response_text.lower().strip() in yes_responses:
+                writer("✅ **Action approved by user. Proceeding to execution.**")
+                return Command(
+                    update={
+                        "action_plan_history": action_plan_history,
+                        "action_plan_remaining": action_plan_remaining,
+                        "current_step_index": current_step_index,
+                        "current_step": current_step
+                    },
+                    goto="action_executor"
+                )
+            elif response_text.lower().strip() in no_responses:
+                writer("🛑 **Action rejected by user. Routing to result summary.**")
+                current_step.analysis_report = ActionAnalysisReport(
+                    analysis="No analysis performed due to action being rejected by user.",
+                    findings=[],
+                    next_action_type="escalate",
+                    next_action_reason="Action rejected by user.",
+                )
+            
+                action_plan_history.append(current_step)
+                return Command(
+                    update={
+                        "action_plan_history": action_plan_history,
+                        "action_plan_remaining": action_plan_remaining,
+                        "current_step_index": current_step_index,
+                        "current_step": current_step
+                    },
+                    goto="result_summary"
+                )
+            else:
+                writer("❌ **Invalid response. Please respond with *yes* or *no*.**")
+                # Reset response to prompt again
+                response = None
     
     # 9. No approval required, proceed to executor
     writer("\n\n✅ **No approval required. Proceeding to execution.**\n\n")
@@ -739,13 +755,13 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
             # Format commands as a bulleted list
             commands_list = "\n".join([f"  - `{cmd}`" for cmd in step.commands]) if step.commands else "  - None"
             
-            steps_markdown.append(f"""### Step {i+1}: {step.description}
-    - **🔄 Action Type:** {step.action_type}
-    - **📟 Commands:** 
-    {commands_list}
-    - **🔍 Expected Output:** {step.output_expectation}
-    - **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
-    """)
+            steps_markdown.append(f"""### Step {current_step_index+i+1}: {step.description}
+- **🔄 Action Type:** {step.action_type}
+- **📟 Commands:** 
+{commands_list}
+- **🔍 Expected Output:** {step.output_expectation}
+- **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
+""")
     
         writer(f"""## 🔍 Action Plan Has Been Updated Based Upon Findings
 
@@ -776,7 +792,28 @@ This node will provide a comprehensive summary of all troubleshooting actions pe
 including successful and failed steps, and recommendations for next actions.
 """)
     
-    return state
+    return {
+        **state,
+        # Reset the NetworkTroubleshootingState to its initial state for future executions
+        "latest_user_message": None,
+        "messages": [],
+        "inventory": {},
+        "alert_raw_data": None,
+        "fault_summary": None,
+        "action_plan": [],
+        "action_plan_remaining": [],
+        "action_plan_history": [],
+        "current_step_index": 0,
+        "current_step": None,
+        "custom_instructions": None,
+        "action_executor_history": [],
+        "execution_result": {},
+        "analysis_report": None,
+        "device_driver": None,
+        "device_facts": {},
+        "settings": {},
+        "test_data": {}
+    }
 
 # # Function to check if we should continue with the next step or end the workflow
 # def should_continue_or_end(state: NetworkTroubleshootingState, writer) -> str:

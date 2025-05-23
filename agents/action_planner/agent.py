@@ -34,7 +34,7 @@ class ActionPlannerDependencies:
     
 # Create the agent with type-safe output and instructions
 action_planner = Agent(
-    model="openai:gpt-4o",
+    model="openai:o4-mini",
     system_prompt=SYSTEM_PROMPT,
     output_type=List[TroubleshootingStep],
     deps_type=ActionPlannerDependencies,

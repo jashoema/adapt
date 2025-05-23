@@ -20,7 +20,7 @@ class FaultSummaryDependencies(BaseModel):
 
 # Initialize the Fault Summary agent with structured output
 agent = Agent(
-    model='openai:gpt-4o',
+    model='openai:gpt-4.1-mini',
     system_prompt=FAULT_SUMMARY_SYSTEM_PROMPT,
     output_type=FaultSummary,
     retries=2,

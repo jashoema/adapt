@@ -36,7 +36,7 @@ class ActionAnalyzerDependencies(BaseModel):
     
 # The core agent definition
 action_analyzer = Agent(
-    model='openai:gpt-4o',  # or use your preferred model
+    model='openai:o4-mini',  # or use your preferred model
     output_type=ActionAnalysisReport,
     system_prompt=ACTION_ANALYZER_SYSTEM_PROMPT,
     name='action_analyzer',
