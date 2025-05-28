@@ -5,7 +5,7 @@ AI-Driven Action Planner & Triage (ADAPT)
 
 ## Requirements
 
-- Needs Python 3.10 and above
+- Needs Python 3.12 and above
 
 ## Overview
 
