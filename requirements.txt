@@ -4,3 +4,13 @@ streamlit
 python-dotenv
 logfire
 netmiko
+pydantic
+langgraph
+httpx
+PyYAML
+asyncio
+typing-extensions
+dataclasses
+pathlib
+datetime
+uuid
