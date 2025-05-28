@@ -25,6 +25,7 @@ logfire.instrument_openai()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("action_executor.agent")
 
+@dataclass
 class ActionExecutorDeps:
     current_step: TroubleshootingStep
     device_driver: Dict[str, Any]
@@ -34,7 +35,7 @@ class ActionExecutorDeps:
     
 # Main Agent
 action_executor = Agent(
-    "openai:gpt-4.1-mini",
+    "openai:gpt-4o-mini",
     system_prompt=SYSTEM_PROMPT,
     tools=[execute_cli_commands, execute_cli_config],
     deps_type=ActionExecutorDeps,
@@ -71,7 +72,7 @@ async def run(deps: ActionExecutorDeps) -> RunContext:
 
     # Format the input for the user prompt
     formatted_input = f"device_facts:\n{json.dumps(device_facts)}\n\n"
-    formatted_input += f"current_step:\n{json.dumps(current_step)}\n\n"
+    formatted_input += f"current_step:\n{json.dumps(current_step.model_dump())}\n\n"
     formatted_input += f"simulation_mode: {simulation}\n\n"
 
     user_prompt = formatted_input

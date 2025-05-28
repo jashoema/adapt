@@ -27,7 +27,7 @@ async def execute_cli_commands(
     """
 
 
-    return "No data available - execute_cli_commands not yet implemented."
+    return "ERROR: No data available - execute_cli_commands not yet implemented."
 
     # device: dict = ctx.deps.device.__dict__
 
@@ -73,7 +73,7 @@ async def execute_cli_config(
         The output of the config commands.
     """
 
-    return "No data available - execute_cli_config not yet implemented."
+    return "ERROR: No data available - execute_cli_config not yet implemented."
 
     # device: dict = ctx.deps.device.__dict__
 
