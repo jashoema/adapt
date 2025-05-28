@@ -1,6 +1,6 @@
 # ADAPT
 
-AI-Driven Action Planner & Troubeshooting (ADAPT)
+AI-Driven Action Planner & Troubleshooter (ADAPT)
 (This is a placeholder name - help me find a better one!)
 
 ## Requirements
