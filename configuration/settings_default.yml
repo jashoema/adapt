@@ -16,6 +16,9 @@ test_name: ""
 # Maximum number of steps to execute in an action plan before escalating
 max_steps: 15
 
+# Adaptive mode - when true, allows the Action Analyzer to recommend new_action steps
+adaptive_mode: true
+
 golden_rules:
   - "rule1"
   - "rule2"

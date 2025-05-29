@@ -26,10 +26,22 @@ from langgraph.checkpoint.memory import MemorySaver
 from httpx import AsyncClient
 
 # Import agents
-from agents.fault_summary import run as run_fault_summary, FaultSummary, FaultSummaryDependencies
-from agents.action_planner import run as run_action_planner, TroubleshootingStep, ActionPlannerDependencies
-from agents.action_executor import run as run_action_executor, DeviceCredentials, ActionExecutorDeps
-from agents.action_analyzer import run as run_action_analyzer, ActionAnalysisReport, ActionAnalyzerDependencies
+from agents.fault_summary import run as run_fault_summary
+from agents.action_planner import run as run_action_planner
+from agents.action_executor import run as run_action_executor
+from agents.action_analyzer import run as run_action_analyzer
+
+# Import models from the central models.py file
+from agents.models import (
+    FaultSummary, 
+    TroubleshootingStep,
+    ActionAnalysisReport, 
+    FaultSummaryDependencies, 
+    ActionPlannerDependencies,
+    ActionExecutorDeps,
+    ActionAnalyzerDependencies,
+    DeviceCredentials
+)
 
 # Load environment variables
 load_dotenv()
@@ -302,10 +314,9 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
 async def run_action_planner_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Run the action planner agent to create a troubleshooting plan."""
     logger.info("Running action planner agent")
-    
-    # Get the fault summary from the state
+      # Get the fault summary from the state
     fault_summary = state["fault_summary"]
-    custom_instructions = state.get("custom_instructions", {})
+    custom_instructions = state.get("custom_instructions", "")  # Initialize as empty string instead of dict
     device_facts = state["device_facts"]
     settings = state["settings"]
     test_data = state.get("test_data", {})
@@ -801,8 +812,7 @@ including successful and failed steps, and recommendations for next actions.
         "alert_raw_data": None,
         "fault_summary": None,
         "action_plan": [],
-        "action_plan_remaining": [],
-        "action_plan_history": [],
+        "action_plan_remaining": [],        "action_plan_history": [],
         "current_step_index": 0,
         "current_step": None,
         "custom_instructions": None,

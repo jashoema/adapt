@@ -102,6 +102,9 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
     """
     Run the agent with streaming text for the user_input prompt,
     while maintaining the entire conversation in `st.session_state.messages`.
+    
+    If step_mode is enabled, the LangGraph execution will pause between nodes
+    and wait for user input before proceeding.
     """
     if settings is None:
         settings = {"simulation_mode": True, "debug_mode": False}
@@ -112,18 +115,53 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
         }
     }
 
+    # Initialize node_output to store the output from each node when in step mode
+    node_output = ""
+    step_mode = settings.get("step_mode", False)
+
     # First message from user
     if len(st.session_state.messages) == 1:
-        async for msg in agentic_flow.astream(
-                {"latest_user_message": user_input, "settings": settings}, config, stream_mode="custom"
-            ):
+        stream_iterator = agentic_flow.astream(
+            {"latest_user_message": user_input, "settings": settings}, 
+            config, 
+            stream_mode="custom"
+        )
+        
+        if step_mode:
+            # In step mode, process one node at a time and pause for user input
+            try:
+                # Get the first node's output
+                node_output = await stream_iterator.__anext__()
+                yield f"{node_output}\n\n---\n\n⏸️ **Step Mode**: Paused after node execution. Enter anything to continue to the next step."
+                
+                # Wait for user input in the main loop (handled externally)
+                # When user provides input, this function will be called again with Command(resume=input)
+            except StopAsyncIteration:
+                # End of stream reached
+                pass
+        else:
+            # Normal mode, stream all nodes without pausing
+            async for msg in stream_iterator:
                 yield msg
     # Continue the conversation
     else:
-        async for msg in agentic_flow.astream(
-            Command(resume=user_input), config, stream_mode="custom"
-        ):
-            yield msg
+        stream_iterator = agentic_flow.astream(
+            Command(resume=user_input), 
+            config, 
+            stream_mode="custom"
+        )
+        
+        if step_mode:
+            try:
+                # Get the next node's output after user provides input to continue
+                node_output = await stream_iterator.__anext__()
+                yield f"{node_output}\n\n---\n\n⏸️ **Step Mode**: Paused after node execution. Enter anything to continue to the next step."
+            except StopAsyncIteration:
+                # End of stream reached
+                yield "✅ **Workflow Complete**: All nodes have been executed."
+        else:
+            async for msg in stream_iterator:
+                yield msg
 
 # Initialize settings in session state if it doesn't exist
 if "settings" not in st.session_state:
@@ -207,6 +245,20 @@ with st.sidebar:
         step=1,
         help="Maximum number of steps to execute before escalating to human intervention"
     )
+    
+    # Add toggle for adaptive_mode
+    adaptive_mode = st.toggle(
+        "Adaptive Mode", 
+        value=st.session_state.settings.get("adaptive_mode", True),
+        help="When enabled, allows the Action Analyzer to recommend new troubleshooting steps based on analysis"
+    )
+    
+    # Add toggle for step_mode
+    step_mode = st.toggle(
+        "Step Mode",
+        value=st.session_state.settings.get("step_mode", False),
+        help="When enabled, pauses between execution of each node in the workflow and waits for user input before proceeding"
+    )
 
     # Golden Rules section with expander
     with st.expander("Golden Rules", expanded=False):
@@ -244,11 +296,12 @@ with st.sidebar:
             st.success("Settings saved successfully!")
         else:
             st.error("Failed to save settings.")
-    
-    # Update session state with current settings
+      # Update session state with current settings
     # When test_mode is enabled, disable simulation_mode automatically
     st.session_state.settings["simulation_mode"] = simulation_mode and not test_mode
     st.session_state.settings["debug_mode"] = debug_mode
+    st.session_state.settings["adaptive_mode"] = adaptive_mode
+    st.session_state.settings["step_mode"] = step_mode
     st.session_state.settings["test_mode"] = test_mode
     st.session_state.settings["test_name"] = test_name
     st.session_state.settings["max_steps"] = max_steps
@@ -294,6 +347,9 @@ elif agent_type == "Full Multi-Agent Workflow":
         st.info("Running in SIMULATION MODE")
     else:
         st.warning("Running in PRODUCTION MODE - Commands will execute on real devices")
+      # Show step mode warning if enabled
+    if st.session_state.settings.get("step_mode", False):
+        st.info("🔄 Running in STEP MODE: Execution will pause between workflow steps and wait for user input")
     
     # Show golden rules information
     with st.expander("Active Golden Rules"):

@@ -20,6 +20,7 @@ The user message supplies one JSON object:
   "device_facts":        { … },  // inventory facts for the affected device
   "action_plan_history": [{ step_result objects … }], // history of executed steps
   "action_plan_remaining":   [{ action_step objects … }] // remaining steps in the action plan
+  "adaptive_mode":       <True|False> // adaptive_mode enabled or disabled
 }
 ```
 
@@ -34,8 +35,9 @@ The user message supplies one JSON object:
 2. **Decide next move** by setting **`next_action_type`**:
 
    * `continue` – proceed with the first item in `action_plan_remaining` (normal path)
-   * `new_action` – the findings invalidate the next planned step; supply a **fresh `updated_action_plan_remaining` list** (see below)
-   * `escalate` – automation can’t continue; human/third-party needed
+   * `new_action` – the findings invalidate the next planned step; supply a **fresh `updated_action_plan_remaining` list** (see below). 
+     **IMPORTANT**: Only use `new_action` if `settings.adaptive_mode` is `true`; otherwise use `continue` or `escalate` instead.
+   * `escalate` – automation can't continue; human/third-party needed
    * `resolve` – fault is no longer present / has been cleared
 
 3. **Explain** your choice in one sentence (`next_action_reason`) and list key evidence lines (`findings`, max 5).
@@ -68,6 +70,7 @@ Return only this JSON object—in the key order shown—no prose, no code fences
 * Do **not** execute commands or modify device state.
 * Quote minimal substrings for evidence; strip prompts (`#`, `>`).
 * When rebuilding `updated_action_plan_remaining`, prepend any urgent new steps before untouched ones that are still relevant.
+* If `settings.adaptive_mode` is `false` and you would otherwise recommend `new_action`, use `continue` or `escalate` instead.
 """
 
 # """

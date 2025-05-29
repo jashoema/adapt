@@ -3,14 +3,12 @@ from __future__ import annotations as _annotations
 import os
 import logging
 import json
-from dataclasses import dataclass
-from typing import Any, List, Dict, Optional, TypedDict
 
 from pydantic_ai import Agent, RunContext, ModelRetry
 
 from .agent_tools import execute_cli_commands, execute_cli_config
 from .agent_prompts import SYSTEM_PROMPT
-from ..models import DeviceCredentials, CommandOutput, ActionExecutorOutput, TroubleshootingStep
+from ..models import DeviceCredentials, CommandOutput, ActionExecutorOutput, TroubleshootingStep, ActionExecutorDeps
 
 import logfire
 
@@ -24,18 +22,10 @@ logfire.instrument_openai()
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("action_executor.agent")
-
-@dataclass
-class ActionExecutorDeps:
-    current_step: TroubleshootingStep
-    device_driver: Dict[str, Any]
-    device_facts: Dict[str, Any]
-    settings: Dict[str, bool]
-    logger: Optional[Any] = None
     
 # Main Agent
 action_executor = Agent(
-    "openai:gpt-4o-mini",
+    "openai:gpt-4.1",
     system_prompt=SYSTEM_PROMPT,
     tools=[execute_cli_commands, execute_cli_config],
     deps_type=ActionExecutorDeps,
@@ -45,6 +35,16 @@ action_executor = Agent(
     description="Network device automation agent that executes CLI commands (e.g. show, config, etc) using SSH or simulation.",
     instrument=True
 )
+
+# Define a dynamic system prompt that incorporates the golden rules
+@action_executor.system_prompt
+def add_golden_rules(ctx: RunContext[ActionExecutorDeps]) -> str:
+    """Add any configured golden rules to the system prompt."""
+    if "golden_rules" in ctx.deps.settings and ctx.deps.settings["golden_rules"]:
+        # Format golden rules as numbered list
+        golden_rules_text = "\n".join([f"{i+1}. {rule}" for i, rule in enumerate(ctx.deps.settings["golden_rules"])])
+        return f"**GOLDEN RULES**\nThe following rules must always be followed during execution:\n{golden_rules_text}"
+    return "No golden rules defined."
 
 async def run(deps: ActionExecutorDeps) -> RunContext:
     """
@@ -69,7 +69,7 @@ async def run(deps: ActionExecutorDeps) -> RunContext:
     current_step = deps.current_step
     simulation = deps.settings.get("simulation_mode", True)
     device_facts = deps.device_facts
-
+    
     # Format the input for the user prompt
     formatted_input = f"device_facts:\n{json.dumps(device_facts)}\n\n"
     formatted_input += f"current_step:\n{json.dumps(current_step.model_dump())}\n\n"
