@@ -14,3 +14,4 @@ dataclasses
 pathlib
 datetime
 uuid
+napalm

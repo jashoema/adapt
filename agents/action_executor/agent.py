@@ -10,6 +10,10 @@ from .agent_tools import execute_cli_commands, execute_cli_config
 from .agent_prompts import SYSTEM_PROMPT
 from ..models import DeviceCredentials, CommandOutput, ActionExecutorOutput, TroubleshootingStep, ActionExecutorDeps
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("action_executor.agent")
+
 import logfire
 
 # configure logfire with API key from environment variable
@@ -71,8 +75,8 @@ async def run(deps: ActionExecutorDeps) -> RunContext:
     device_facts = deps.device_facts
     
     # Format the input for the user prompt
-    formatted_input = f"device_facts:\n{json.dumps(device_facts)}\n\n"
-    formatted_input += f"current_step:\n{json.dumps(current_step.model_dump())}\n\n"
+    formatted_input = f"device_facts:\n{json.dumps(device_facts, default=str)}\n\n"  # Use default=str to handle non-serializable objects
+    formatted_input += f"current_step:\n{json.dumps(current_step.model_dump(), default=str)}\n\n"
     formatted_input += f"simulation_mode: {simulation}\n\n"
 
     user_prompt = formatted_input
@@ -82,5 +86,5 @@ async def run(deps: ActionExecutorDeps) -> RunContext:
             "user_prompt": user_prompt
         })
     
-    # Execute the agent with the user prompt
+    # Execute the agent with the user prompt    
     return await action_executor.run(user_prompt, deps=deps)

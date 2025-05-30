@@ -61,7 +61,7 @@ class HelloWorldDependencies(BaseModel):
 class ActionExecutorDeps:
     """Dependencies for the action executor agent."""
     current_step: TroubleshootingStep
-    device_driver: Any
+    device_driver: Any  # The actual NAPALM device driver object
     device_facts: Dict[str, Any]
     settings: Dict[str, Any]
     logger: Optional[Any] = None

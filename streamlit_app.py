@@ -452,10 +452,6 @@ if user_input:
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Multi-Agent Workflow", extra={"user_input": user_input})
                     
-                    # Create device credentials from environment variables
-                    device_hostname = os.getenv("DEVICE_HOSTNAME", "192.0.2.100")
-                    device_type = os.getenv("DEVICE_TYPE", "cisco_ios")
-                    
                     response_content = ""
                     async for chunk in run_agent_with_streaming(user_input, settings=st.session_state.settings):
                         response_content += chunk

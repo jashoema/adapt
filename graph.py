@@ -16,9 +16,11 @@ import os
 import logging
 import asyncio
 import yaml
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
+import napalm
 from pydantic import BaseModel, Field
 from langgraph.types import interrupt, Command
 from langgraph.graph import StateGraph, START, END
@@ -45,6 +47,10 @@ from agents.models import (
 
 # Load environment variables
 load_dotenv()
+
+# Global variable for NAPALM device driver
+# Will be initialized in run_init_deps_node and passed to run_action_executor_node
+NAPALM_DEVICE_DRIVER = None
 
 # Path to the network device inventory YAML file
 inventory_path = os.getenv("INVENTORY_PATH", "configuration/inventory.yml")
@@ -105,7 +111,7 @@ def load_network_inventory(file_path: str) -> Dict[str, Any]:
     """
     Load network device inventory from a YAML file.
     
-    This function will read in the details of a network device inventory
+    This function reads in the details of a network device inventory
     from a YAML file into a Python dictionary. The inventory contains
     information about network devices such as hostname, IP address,
     device type, credentials, etc.
@@ -116,13 +122,49 @@ def load_network_inventory(file_path: str) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Dictionary containing network device inventory
         
-    Future enhancements:
-    - Add validation for required fields
-    - Support for different inventory formats
-    - Handle authentication information securely
+    Loads credentials from environment variables if not specified in the inventory.
+    Validates required fields for NAPALM device connection.
     """
-    # Stub function - will be implemented in the future
-    return {}
+    default_inventory = {"devices": {}}
+    
+    try:
+        if not os.path.exists(file_path):
+            logger.warning(f"Inventory file {file_path} not found, using default empty inventory")
+            return default_inventory
+            
+        with open(file_path, 'r') as file:
+            inventory = yaml.safe_load(file)
+            
+        # Ensure the expected structure exists
+        if "devices" not in inventory:
+            logger.warning("Inventory file missing 'devices' section, using default empty inventory")
+            return default_inventory
+            
+        # Load defaults from environment variables
+        default_username = os.getenv("DEVICE_USERNAME", "")
+        default_password = os.getenv("DEVICE_PASSWORD", "")
+        default_secret = os.getenv("DEVICE_SECRET", "")
+        
+        # Apply environment variable defaults to any device missing credentials
+        for device_name, device_data in inventory["devices"].items():
+            # Apply username from env if not in device config
+            if not device_data.get("username"):
+                device_data["username"] = default_username
+                
+            # Apply password from env if not in device config
+            if not device_data.get("password"):
+                device_data["password"] = default_password
+                
+            # Apply secret to optional_args if needed
+            if "optional_args" in device_data:
+                if "secret" not in device_data["optional_args"] or not device_data["optional_args"]["secret"]:
+                    device_data["optional_args"]["secret"] = default_secret
+        
+        logger.info(f"Loaded inventory from {file_path} with {len(inventory['devices'])} devices")
+        return inventory
+    except Exception as e:
+        logger.error(f"Error loading inventory: {str(e)}")
+        return default_inventory
 
 # Load network inventory
 network_inventory = load_network_inventory(inventory_path)
@@ -144,8 +186,7 @@ class NetworkTroubleshootingState(TypedDict):
     action_executor_history: List[Dict[str, Any]]
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
-    device_driver: Optional[Any] # Placeholder for device driver
-    device_facts: Dict[str, Any]  # Placeholder for device facts
+    device_facts: Dict[str, Any]  # Device facts including reachability information
     settings: Dict[str, Any]  # Contains simulation_mode, test_mode, test_name, etc.
     test_data: Optional[Dict[str, Any]]  # Store loaded test data
 
@@ -194,13 +235,21 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
         settings=settings,
         logger=logger
     )
-    
-    # Run the fault summary agent with dependencies
+      # Run the fault summary agent with dependencies
     result = await run_fault_summary(alert_raw_data, deps=fault_summary_deps)
     fault_summary = result.output
 
+    # Generate output showing the raw alert that was received
+    writer(f"""## 🚨 Alert Received
+
+The following alert has been received:
+```
+{alert_raw_data}
+```
+""")
+
     # Generate human-readable output for the writer based on FaultSummary class structure with Markdown formatting
-    writer(f"""## 📊 Fault Summary
+    writer(f"""\n\n## 📊 Fault Summary
 
 **Title:** {fault_summary.title}  
 **Summary:** {fault_summary.summary}  
@@ -222,20 +271,19 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
 async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Initialize device dependencies before running the action planner."""
     logger.info("Running init_deps node")
-    
-    # Get settings and fault_summary from state
+      # Get settings and fault_summary from state
     settings = state["settings"]
     fault_summary = state["fault_summary"]
-    inventory = network_inventory  # Load network inventory
+    inventory = load_network_inventory(inventory_path)  # Load network inventory
     
     # Initialize device_facts with default values
     device_facts = {
         "reachable": True,
         "errors": []
-    }
+    }    # We no longer need to initialize device_driver_params as we're using global NAPALM_DEVICE_DRIVER
     
-    # Initialize device_driver as None
-    device_driver = None
+    # Access the global NAPALM device driver
+    global NAPALM_DEVICE_DRIVER
     
     # Only perform actual device connection when not in simulation or test mode
     if not settings.get("simulation_mode", True) and not settings.get("test_mode", False):
@@ -244,48 +292,89 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
             hostname = fault_summary.hostname
             
             # Look up device details in inventory
-            device_details = inventory.get(hostname, {})
+            device_details = inventory.get("devices", {}).get(hostname, {})
             
             if not device_details:
                 logger.warning(f"Device {hostname} not found in inventory")
                 device_facts["reachable"] = False
                 device_facts["errors"].append(f"Device {hostname} not found in inventory")
             else:
-                # Generate NAPALM device driver
-                # PLACEHOLDER: Code to initialize NAPALM driver based on device_details
-                # device_driver = napalm.get_network_driver(device_details["driver"])
-                # device = device_driver(hostname, username, password, optional_args=optional_args)
-                # device.open()
-                
-                # Run get_facts on the driver
-                # PLACEHOLDER: Code to retrieve facts from the device
-                # device_facts = device.get_facts()
-                # Additional facts can be collected here
-                
-                # For placeholder purposes
-                device_driver = {"type": "napalm_driver", "device": hostname}
-                device_facts = {
-                    "hostname": hostname,
-                    "vendor": "cisco",
-                    "model": "CSR1000v",
-                    "uptime": 12345,
-                    "os_version": "16.9.3",
-                    "serial_number": "9KLAVM0JJ62",
-                    "reachable": True,
-                    "errors": []
-                }
-                
-                # Log successful connection
-                logger.info(f"Successfully connected to {hostname}")
+                try:                    # Get device type from inventory
+                    device_type = device_details.get("device_type")
+                    if not device_type:
+                        raise ValueError(f"Device type not specified for {hostname}")
+
+                    # Get connection parameters - store only serializable parameters
+                    host = device_details.get("hostname")
+                    username = device_details.get("username")
+                    password = device_details.get("password")
+                    optional_args = device_details.get("optional_args", {})
+                    
+                    # Close the existing driver if it's already open
+                    if NAPALM_DEVICE_DRIVER:
+                        try:
+                            NAPALM_DEVICE_DRIVER.close()
+                            logger.info(f"Closed existing NAPALM connection before creating a new one")
+                        except Exception as e:
+                            # Do nothing because the connection has probably already been closed
+                            pass
+
+                    # Get the NAPALM driver class for the device type
+                    driver = napalm.get_network_driver(device_type)
+                    
+                    # Initialize the global NAPALM device driver
+                    NAPALM_DEVICE_DRIVER = driver(
+                        hostname=host,
+                        username=username,
+                        password=password,
+                        optional_args=optional_args
+                    )
+                    
+                    # Open connection and get facts
+                    NAPALM_DEVICE_DRIVER.open()
+                    
+                    # Get device facts
+                    device_facts = NAPALM_DEVICE_DRIVER.get_facts()
+                    # Add reachable and errors fields
+                    device_facts["reachable"] = True
+                    device_facts["errors"] = []
+                    
+                    # Don't close the connection - keep it open for later use
+                    
+                    # Log successful connection
+                    logger.info(f"Successfully connected to {hostname}")
+                    
+                except Exception as e:
+                    error_message = f"Failed to initialize NAPALM driver: {str(e)}"
+                    logger.error(error_message)
+                    device_facts["reachable"] = False
+                    device_facts["errors"].append(error_message)
                 
         except Exception as e:
             # Handle connection failures
             error_message = f"Failed to connect to device: {str(e)}"
             logger.error(error_message)
-            
-            # Update device_facts to indicate unreachable
+              # Update device_facts to indicate unreachable
             device_facts["reachable"] = False
             device_facts["errors"].append(error_message)
+    else:
+        # Simulation mode - create simulated facts
+        hostname = fault_summary.hostname
+        device_facts = {
+            "hostname": hostname,
+            "vendor": "cisco",
+            "model": "CSR1000v",
+            "uptime": 12345,
+            "os_version": "16.9.3",
+            "serial_number": "9KLAVM0JJ62",
+            "interface_list": ["GigabitEthernet0/0", "GigabitEthernet0/1", "Loopback0"],
+            "fqdn": f"{hostname}.example.com",
+            "reachable": True,
+            "errors": []
+        }        # We no longer need simulated driver parameters as we're using the global NAPALM_DEVICE_DRIVER
+        
+        # Set global driver to None in simulation mode
+        NAPALM_DEVICE_DRIVER = None
     
     # Generate output for the writer
     if device_facts["reachable"]:
@@ -293,20 +382,27 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
     else:
         status = "❌ Device unreachable"
     
+    # Create a formatted output of device facts for the writer
+    facts_output = ""
+    for key, value in device_facts.items():
+        if key != "errors":  # We're handling errors separately
+            facts_output += f"- **{key}:** {value}\n"
+    
     writer(f"""## 🔌 Device Dependency Initialization
 
 **Device:** {fault_summary.hostname}
 **Status:** {status}
 
+### Device Facts:
+{facts_output}
+
 {"### Errors:" if device_facts["errors"] else ""}
 {"".join([f"- {error}\n" for error in device_facts["errors"]])}
-""")
-    
-    # Update the state with the initialized dependencies
+""")    # Update the state with the initialized dependencies
+    # No need to include device_driver_params as we're using the global NAPALM_DEVICE_DRIVER
     return {
         **state,
         "inventory": inventory,
-        "device_driver": device_driver,
         "device_facts": device_facts
     }
 
@@ -583,12 +679,9 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
 # Function to run the action executor agent
 async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Run the action executor agent to execute the current step in the action plan."""
-    logger.info("Running action executor agent")
-    
-    # Get the action plan and current step index from the state
+    logger.info("Running action executor agent")    # Get the action plan and current step index from the state
     action_plan_remaining = state["action_plan_remaining"]
     action_executor_history = state.get("action_executor_history", [])
-    device_driver = state["device_driver"]
     device_facts = state["device_facts"]
     settings = state["settings"]
     test_data = state.get("test_data", {})
@@ -620,12 +713,14 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
             "command_outputs": command_outputs,
             "errors": errors
         }
+    else:
+        # Access the global NAPALM device driver
+        global NAPALM_DEVICE_DRIVER
         
-    else: 
         # Create dependencies for the action executor
         deps = ActionExecutorDeps(
             current_step=current_step,
-            device_driver=device_driver,
+            device_driver=NAPALM_DEVICE_DRIVER,  # Pass actual device driver object
             device_facts=device_facts,
             settings=settings,
             logger=logger
@@ -794,8 +889,17 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
 async def run_result_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Generate a summary of troubleshooting results."""
     logger.info("Running result summary node")
-    
-    writer("""## 📋 Troubleshooting Results Summary
+
+    # Close the NAPALM device driver connection if it was opened
+    global NAPALM_DEVICE_DRIVER
+    if NAPALM_DEVICE_DRIVER:
+        try:
+            NAPALM_DEVICE_DRIVER.close()
+            logger.info("Closed NAPALM device driver connection")
+        except Exception as e:
+            logger.error(f"Error closing NAPALM device driver: {str(e)}")
+
+    writer("""\n\n## 📋 Troubleshooting Results Summary
     
 **This is a stub implementation of the result_summary node.**
 
@@ -812,7 +916,8 @@ including successful and failed steps, and recommendations for next actions.
         "alert_raw_data": None,
         "fault_summary": None,
         "action_plan": [],
-        "action_plan_remaining": [],        "action_plan_history": [],
+        "action_plan_remaining": [],        
+        "action_plan_history": [],
         "current_step_index": 0,
         "current_step": None,
         "custom_instructions": None,
