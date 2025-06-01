@@ -920,7 +920,6 @@ including successful and failed steps, and recommendations for next actions.
         "action_plan_history": [],
         "current_step_index": 0,
         "current_step": None,
-        "custom_instructions": None,
         "action_executor_history": [],
         "execution_result": {},
         "analysis_report": None,

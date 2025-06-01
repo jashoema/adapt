@@ -535,6 +535,9 @@ if st.session_state.test_user_input:
     st.session_state.test_user_input = None  # Clear the test input after using it
 elif st.session_state.alert_queue_user_input:
     user_input = st.session_state.alert_queue_user_input
+    st.session_state.messages = []
+    # Reset the thread_id to make sure we get rid of any stale state data for the graph
+    thread_id = reset_thread_id()
     st.session_state.alert_queue_user_input = None  # Clear the alert queue input after using it
 
 # Handle user input
