@@ -493,7 +493,7 @@ if 'alert_queue_user_input' not in st.session_state:
 def dequeue_oldest_alert(alert_queue_file):
     """
     Reads and removes the oldest alert (first line) from the alert queue file (JSON Lines format).
-    Returns the alert content as a string, or None if the queue is empty.
+    Returns the alert content as a pretty-printed string, or None if the queue is empty.
     """
     import json
     import threading
@@ -511,7 +511,8 @@ def dequeue_oldest_alert(alert_queue_file):
             f.writelines(remaining)
         try:
             alert_obj = json.loads(oldest_alert_json)
-            return alert_obj.get('content', str(alert_obj))
+            # Pretty print the JSON object
+            return json.dumps(alert_obj, indent=4, ensure_ascii=False)
         except Exception:
             return oldest_alert_json.strip()
 
