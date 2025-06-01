@@ -182,7 +182,6 @@ class NetworkTroubleshootingState(TypedDict):
     action_plan_remaining: Optional[List[TroubleshootingStep]]
     current_step_index: int
     current_step: TroubleshootingStep
-    custom_instructions: str
     action_executor_history: List[Dict[str, Any]]
     execution_result: Optional[Dict[str, Any]]
     analysis_report: Optional[ActionAnalysisReport]
@@ -410,11 +409,12 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
 async def run_action_planner_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Run the action planner agent to create a troubleshooting plan."""
     logger.info("Running action planner agent")
-      # Get the fault summary from the state
+    # Get the fault summary from the state
     fault_summary = state["fault_summary"]
-    custom_instructions = state.get("custom_instructions", "")  # Initialize as empty string instead of dict
     device_facts = state["device_facts"]
     settings = state["settings"]
+    # Use custom_instructions from settings if present
+    custom_instructions = settings.get("custom_instructions", "")
     test_data = state.get("test_data", {})
     
     if not fault_summary:
@@ -468,7 +468,7 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
         "action_plan": action_plan,
         "action_plan_remaining": action_plan,
         "action_plan_history": [],
-        "current_step_index": 0
+        "current_step_index": 0,
     }
 
 async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState | Command[Literal["action_executor", "result_summary"]]:

@@ -10,6 +10,9 @@ from httpx import AsyncClient
 from datetime import datetime
 import uuid
 import logging
+import subprocess
+import sys
+import time
 
 from langgraph.types import Command
 
@@ -178,14 +181,35 @@ else:
 # Add a title and description
 st.title("🤖 Autonomous Network Troubleshooter Dashboard")
 
+# Track Alert Queue process info in session state
+if 'alert_queue_process' not in st.session_state:
+    st.session_state.alert_queue_process = None
+if 'alert_queue_pid' not in st.session_state:
+    st.session_state.alert_queue_pid = None
+if 'alert_queue_port' not in st.session_state:
+    st.session_state.alert_queue_port = 8001
+
 # Add sidebar for agent selection
 with st.sidebar:
     st.header("Select Workflow")
-    agent_type = st.radio(
-        "Choose an workflow option:",
-        ["Full Multi-Agent Workflow", "Fault Summarizer Agent", "Action Planner Agent", "Action Executor Agent", "Action Analyzer Agent", "Summary Report Agent", "Hello World Agent"],
-        index=0
-    )
+    agent_type = st.selectbox(
+        "Choose a workflow option:",
+        options=[
+            "Full Multi-Agent Workflow",
+            "Fault Summarizer Agent",
+            "Action Planner Agent",
+            "Action Executor Agent",
+            "Action Analyzer Agent",
+            "Summary Report Agent",
+            "Hello World Agent"
+        ],
+        index=0,
+        help="Select the agent or workflow you want to run.")
+    # agent_type = st.radio(
+    #     "Choose an workflow option:",
+    #     ["Full Multi-Agent Workflow", "Fault Summarizer Agent", "Action Planner Agent", "Action Executor Agent", "Action Analyzer Agent", "Summary Report Agent", "Hello World Agent"],
+    #     index=0
+    # )
     
     # Add toggles for settings
     st.header("Settings")
@@ -260,8 +284,8 @@ with st.sidebar:
         help="When enabled, pauses between execution of each node in the workflow and waits for user input before proceeding"
     )
 
-    # Golden Rules section with expander
-    with st.expander("Golden Rules", expanded=False):
+    # Golden Rules section with popover
+    with st.popover("Golden Rules"):
         st.caption("These rules are always followed by the agentic workflow:")
         
         # Initialize golden_rules if not already in session_state.settings
@@ -289,15 +313,37 @@ with st.sidebar:
                 st.session_state.settings["golden_rules"].append(new_rule)
                 st.rerun()
     
-    # Persist settings button
-    if st.button("Save Settings to File"):
-        success = save_settings(st.session_state.settings)
-        if success:
-            st.success("Settings saved successfully!")
-        else:
-            st.error("Failed to save settings.")
-      # Update session state with current settings
-    # When test_mode is enabled, disable simulation_mode automatically
+    # Custom Instructions section with popover
+    with st.popover("Custom Instructions"):
+        st.caption("Add any custom instructions for the agentic workflow:")
+        # Initialize custom_instructions in settings if not already present
+        if "custom_instructions" not in st.session_state.settings:
+            st.session_state.settings["custom_instructions"] = ""
+        custom_instructions = st.text_area(
+            "Custom Instructions",
+            value=st.session_state.settings["custom_instructions"],
+            key="custom_instructions_input",
+            height=100,
+            help="Provide any custom instructions or context for the workflow."
+        )
+        if custom_instructions != st.session_state.settings["custom_instructions"]:
+            st.session_state.settings["custom_instructions"] = custom_instructions
+    
+    # Persist settings and reset buttons on the same line
+    col_save, col_reset = st.columns([1, 1])
+    with col_save:
+        if st.button("Save Settings"):
+            success = save_settings(st.session_state.settings)
+            if success:
+                st.success("Settings saved successfully!")
+            else:
+                st.error("Failed to save settings.")
+    with col_reset:
+        if st.button("Default Settings"):
+            config_settings = load_settings(settings_path)
+            st.session_state.settings = config_settings
+            st.rerun()
+    # Update session state with current settings (do not remove this section)
     st.session_state.settings["simulation_mode"] = simulation_mode and not test_mode
     st.session_state.settings["debug_mode"] = debug_mode
     st.session_state.settings["adaptive_mode"] = adaptive_mode
@@ -306,18 +352,57 @@ with st.sidebar:
     st.session_state.settings["test_name"] = test_name
     st.session_state.settings["max_steps"] = max_steps
     
-    # Add a button to reset settings to default
-    if st.button("Reset to Default Settings"):
-        config_settings = load_settings(settings_path)
-        st.session_state.settings = config_settings
-        st.rerun()
-    
     st.divider()
 
     if st.button("Reset Chat History", key="clear_chat"):
         st.session_state.messages = []
         thread_id = reset_thread_id()
         st.rerun()
+
+# --- Alert Queue Control Button ---
+    alert_queue_port = st.number_input(
+        "Alert Queue Port",
+        min_value=1024,
+        max_value=65535,
+        value=st.session_state.get("alert_queue_port", 8001),
+        step=1,
+        help="Port to run the Alert Queue service on (default: 8001)"
+    )
+    st.session_state["alert_queue_port"] = alert_queue_port
+
+    alert_queue_running = st.session_state.alert_queue_process is not None and st.session_state.alert_queue_process.poll() is None
+    if alert_queue_running:
+        if st.button("🛑 Stop Alert Queue", key="stop_alert_queue_btn"):
+            try:
+                st.session_state.alert_queue_process.terminate()
+                st.session_state.alert_queue_process.wait(timeout=5)
+            except Exception as e:
+                st.error(f"Failed to stop Alert Queue: {e}")
+            st.session_state.alert_queue_process = None
+            st.session_state.alert_queue_pid = None
+            st.success("Alert Queue stopped.")
+            time.sleep(5)
+            st.rerun()
+        alert_queue_doc_url = f"http://localhost:{alert_queue_port}/docs"
+        st.caption(f"Alert Queue Docs: {alert_queue_doc_url}")
+    else:
+        if st.button("▶️ Start Alert Queue", key="start_alert_queue_btn"):
+            try:
+                alert_queue_process = subprocess.Popen([
+                    sys.executable, "alert_queue.py", "--port", str(alert_queue_port)
+                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                st.session_state.alert_queue_process = alert_queue_process
+                st.session_state.alert_queue_pid = alert_queue_process.pid
+                st.success(f"Alert Queue started (PID: {alert_queue_process.pid}) on port {alert_queue_port}")
+                time.sleep(5)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to start Alert Queue: {e}")
+    if st.session_state.alert_queue_pid:
+        st.caption(f"Alert Queue Port: {st.session_state.alert_queue_port}\n(Process ID: {st.session_state.alert_queue_pid})")
+    st.divider()
+    # --- End Alert Queue Control Button ---
+    
 
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
@@ -400,6 +485,44 @@ if "current_response" not in st.session_state:
 if "test_user_input" not in st.session_state:
     st.session_state.test_user_input = None
 
+# Add Alert Queue Check button and logic
+alert_queue_file = os.path.join(os.path.dirname(__file__), 'workbench', 'alert_queue.txt')
+if 'alert_queue_user_input' not in st.session_state:
+    st.session_state.alert_queue_user_input = None
+
+def dequeue_oldest_alert(alert_queue_file):
+    """
+    Reads and removes the oldest alert (first line) from the alert queue file (JSON Lines format).
+    Returns the alert content as a string, or None if the queue is empty.
+    """
+    import json
+    import threading
+    lock = threading.Lock()
+    with lock:
+        if not os.path.exists(alert_queue_file):
+            return None
+        with open(alert_queue_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        if not lines:
+            return None
+        oldest_alert_json = lines[0]
+        remaining = lines[1:]
+        with open(alert_queue_file, 'w', encoding='utf-8') as f:
+            f.writelines(remaining)
+        try:
+            alert_obj = json.loads(oldest_alert_json)
+            return alert_obj.get('content', str(alert_obj))
+        except Exception:
+            return oldest_alert_json.strip()
+
+if st.button('Check Alert Queue', key='check_alert_queue'):
+    alert_content = dequeue_oldest_alert(alert_queue_file)
+    if alert_content:
+        st.session_state.alert_queue_user_input = alert_content
+        st.success('Dequeued one alert from the queue.')
+    else:
+        st.info('No alerts in the queue.')
+
 # Display chat history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -410,6 +533,9 @@ user_input = st.chat_input("Say something to the agent...")
 if st.session_state.test_user_input:
     user_input = st.session_state.test_user_input
     st.session_state.test_user_input = None  # Clear the test input after using it
+elif st.session_state.alert_queue_user_input:
+    user_input = st.session_state.alert_queue_user_input
+    st.session_state.alert_queue_user_input = None  # Clear the alert queue input after using it
 
 # Handle user input
 if user_input:
