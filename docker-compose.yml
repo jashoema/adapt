@@ -8,6 +8,8 @@ services:
     volumes:
       # Mount the workbench directory for persistent data
       - ./workbench:/app/workbench
+      # Mount the configuration directory for easier config management
+      - ./configuration:/app/configuration
     env_file:
       - .env
     restart: unless-stopped

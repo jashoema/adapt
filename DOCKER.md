@@ -38,6 +38,15 @@ docker-compose up --build -d
 docker-compose down
 ```
 
+## Mounted Volumes
+
+The following directories are mounted from the host into the container:
+
+- **./workbench:/app/workbench**: For persistent data storage
+- **./configuration:/app/configuration**: For device inventories and settings files
+
+Any changes made to these directories on the host will be immediately reflected in the container.
+
 ## What's Running in the Container
 
 - **Streamlit Application**: Runs on port 8501
