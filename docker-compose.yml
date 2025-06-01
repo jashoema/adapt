@@ -1,0 +1,13 @@
+
+services:
+  adapt-app:
+    build: .
+    ports:
+      - "8501:8501"
+      - "8001:8001"    
+    volumes:
+      # Mount the workbench directory for persistent data
+      - ./workbench:/app/workbench
+    env_file:
+      - .env
+    restart: unless-stopped
