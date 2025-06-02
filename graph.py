@@ -377,7 +377,7 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     
                     # Log successful connection
                     logger.info(f"Successfully connected to {hostname}")
-                    except Exception as e:
+                except Exception as e:
                     error_message = f"Failed to initialize NAPALM driver: {str(e)}"
                     logger.error(error_message)
                     device_facts["reachable"] = False
