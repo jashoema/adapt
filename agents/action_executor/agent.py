@@ -29,7 +29,7 @@ logger = logging.getLogger("action_executor.agent")
     
 # Main Agent
 action_executor = Agent(
-    "openai:gpt-4.1",
+    "openai:gpt-4o",
     system_prompt=SYSTEM_PROMPT,
     tools=[execute_cli_commands, execute_cli_config],
     deps_type=ActionExecutorDeps,
