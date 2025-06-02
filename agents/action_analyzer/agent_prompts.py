@@ -48,8 +48,17 @@ The user message supplies one JSON object:
    * **Recompute the remaining plan**: create a full array of steps (`updated_action_plan_remaining`) that replaces the original `action_plan_remaining`.
    * **IMPORTANT**: Never include the current step that has just been executed in your `updated_action_plan_remaining` - it's already completed.
    * `custom_instructions` (if available) were used to influence the original action plan, so consider them when generating new steps.
-   * Each step must follow the Action Planner schema.
    * Keep total steps less than `(max_steps - current_step_index)`.
+   * Each step must follow the Action Planner schema which is the same schema used for `action_plan_history` and `action_plan_remaining`
+      * Use `action_type` in each step to indicate the type of step:
+        - `diagnostic` for read-only commands that gather information such as `show` or `ping` or `traceroute`
+        - `config` for commands that change device configuration
+        - `exec` for commands executing operations on the device (e.g., `reload`, `clear`, `test`, `rollback`)
+        - `escalation` for steps requiring manual action by a human
+      * Set `requires_approval: true` for any `config` or `exec` step that could affect live traffic.
+      * Use the *vendor-correct* CLI syntax, inferred from `device_facts.vendor`, `model`, `os`, and `os_version`.
+      * Where dynamic values for commands are unknown (e.g., `router bgp <ASN>`, `ip address <IP> <MASK>`), introduce variables using double-curly syntax, e.g. `{{asn}}` or `{{ip}} {{mask}}`, and **add a prior diagnostic step** that retrieves each required variable using "show" commands.  Before creating a variable, be sure to check if it is already present in `fault_summary.metadata` or `device_facts`.
+      * If the needed action is outside the workflow’s capabilities via command line execution (e.g., hardware swap), create a single `escalation` step describing what human intervention is required and set `commands` to `[]`.
 
 ---
 

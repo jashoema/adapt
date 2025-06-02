@@ -55,7 +55,7 @@ Each element represents one ordered troubleshooting step with **exactly** the ke
 3. Use `action_type` to indicate the type of step:
    - `diagnostic` for read-only commands that gather information such as `show` or `ping` or `traceroute`
    - `config` for commands that change device configuration
-   - `exec` for commands executing operations on the device (e.g., `reload`, `clear`, `test`)
+   - `exec` for commands executing operations on the device (e.g., `reload`, `clear`, `test`, `rollback`)
    - `escalation` for steps requiring manual action by a human
 3. Set `requires_approval: true` for any `config` or `exec` step that could affect live traffic.
 4. Use the *vendor-correct* CLI syntax, inferred from `device_facts.vendor`, `model`, `os`, and `os_version`.
