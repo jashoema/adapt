@@ -21,6 +21,7 @@ The user message supplies one JSON object:
   "action_plan_history": [{ step_result objects … }], // history of executed steps
   "action_plan_remaining":   [{ action_step objects … }] // remaining steps in the action plan
   "adaptive_mode":       <True|False> // adaptive_mode enabled or disabled
+  "custom_instructions": "…"   // optional; custom instructions for this workflow
 }
 ```
 
@@ -46,6 +47,7 @@ The user message supplies one JSON object:
 4. **When providing `updated_action_plan_remaining`**
    * **Recompute the remaining plan**: create a full array of steps (`updated_action_plan_remaining`) that replaces the original `action_plan_remaining`.
    * **IMPORTANT**: Never include the current step that has just been executed in your `updated_action_plan_remaining` - it's already completed.
+   * `custom_instructions` (if available) were used to influence the original action plan, so consider them when generating new steps.
    * Each step must follow the Action Planner schema.
    * Keep total steps less than `(max_steps - current_step_index)`.
 

@@ -86,6 +86,7 @@ async def run(deps: ActionAnalyzerDependencies) -> RunContext:
         f"action_plan_history: {action_plan_history_context}\n"
         f"action_plan_remaining: {action_plan_remaining_context}\n"
         f"adaptive_mode: {deps.settings['adaptive_mode']}\n"
+        f"custom_instructions: {deps.settings.get('custom_instructions', '')}\n"
     )
     
     if deps.settings.get("debug_mode", False) and deps.logger:
