@@ -20,8 +20,9 @@ import json
 from pathlib import Path
 
 from dotenv import load_dotenv
-import napalm
+from netmiko import ConnectHandler
 from pydantic import BaseModel, Field
+from agents.action_executor.netmiko_utils import parse_device_facts, get_interface_list
 from langgraph.types import interrupt, Command
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -48,9 +49,9 @@ from agents.models import (
 # Load environment variables
 load_dotenv()
 
-# Global variable for NAPALM device driver
+# Global variable for Netmiko connection
 # Will be initialized in run_init_deps_node and passed to run_action_executor_node
-NAPALM_DEVICE_DRIVER = None
+NETMIKO_CONNECTION = None
 
 # Path to the network device inventory YAML file
 inventory_path = os.getenv("INVENTORY_PATH", "configuration/inventory.yml")
@@ -281,9 +282,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
         "reachable": True,
         "errors": []
     }    
-    
-    # Access the global NAPALM device driver
-    global NAPALM_DEVICE_DRIVER
+      # Access the global Netmiko connection
+    global NETMIKO_CONNECTION
     
     # Only perform actual device connection when not in simulation or test mode
     if not settings.get("simulation_mode", True) and not settings.get("test_mode", False):
@@ -304,37 +304,70 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     if not device_type:
                         raise ValueError(f"Device type not specified for {hostname}")
 
-                    # Get connection parameters - store only serializable parameters
+                    # Get connection parameters
                     host = device_details.get("hostname")
                     username = device_details.get("username")
                     password = device_details.get("password")
                     optional_args = device_details.get("optional_args", {})
                     
-                    # Close the existing driver if it's already open
-                    if NAPALM_DEVICE_DRIVER:
+                    # Close the existing connection if it's already open
+                    if NETMIKO_CONNECTION:
                         try:
-                            NAPALM_DEVICE_DRIVER.close()
-                            logger.info(f"Closed existing NAPALM connection before creating a new one")
+                            NETMIKO_CONNECTION.disconnect()
+                            logger.info(f"Closed existing Netmiko connection before creating a new one")
                         except Exception as e:
                             # Do nothing because the connection has probably already been closed
                             pass
 
-                    # Get the NAPALM driver class for the device type
-                    driver = napalm.get_network_driver(device_type)
+                    # Map device_type to Netmiko device type - add more mappings as needed
+                    netmiko_device_type_map = {
+                        'ios': 'cisco_ios',
+                        'iosxr': 'cisco_xr',
+                        'nxos': 'cisco_nxos',
+                        'junos': 'juniper_junos'
+                    }
                     
-                    # Initialize the global NAPALM device driver
-                    NAPALM_DEVICE_DRIVER = driver(
-                        hostname=host,
-                        username=username,
-                        password=password,
-                        optional_args=optional_args
-                    )
+                    netmiko_device_type = netmiko_device_type_map.get(device_type, device_type)
                     
-                    # Open connection and get facts
-                    NAPALM_DEVICE_DRIVER.open()
+                    # Create a device dictionary for Netmiko
+                    device_dict = {
+                        'device_type': netmiko_device_type,
+                        'host': host,
+                        'username': username,
+                        'password': password,
+                        'port': optional_args.get('port', 22),
+                    }
                     
-                    # Get device facts
-                    device_facts = NAPALM_DEVICE_DRIVER.get_facts()
+                    # Add optional secret if it exists
+                    if 'secret' in optional_args and optional_args['secret']:
+                        device_dict['secret'] = optional_args['secret']
+                    
+                    # Initialize the global Netmiko connection
+                    NETMIKO_CONNECTION = ConnectHandler(**device_dict)
+                      # Get device facts using Netmiko commands
+                    facts = {}
+                    try:
+                        # Get hostname
+                        output = NETMIKO_CONNECTION.send_command('show version')
+                        facts['hostname'] = hostname
+                        
+                        # Parse facts based on device type
+                        parsed_facts = parse_device_facts(netmiko_device_type, output)
+                        facts.update(parsed_facts)
+                        
+                        # Get interfaces using helper function
+                        facts['interface_list'] = get_interface_list(NETMIKO_CONNECTION, netmiko_device_type)
+                                    
+                        # Default fallback - use what we have                        
+                        if 'fqdn' not in facts:
+                            facts['fqdn'] = f"{hostname}.example.com"  # Default placeholder
+                        
+                    except Exception as e:
+                        logger.warning(f"Error getting detailed facts: {str(e)}. Using basic facts.")
+                    
+                    # Update device_facts with what we gathered
+                    device_facts.update(facts)
+                    
                     # Add os, reachable, and errors fields
                     device_facts["os"] = device_details.get("device_type")
                     device_facts["reachable"] = True
@@ -344,8 +377,7 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     
                     # Log successful connection
                     logger.info(f"Successfully connected to {hostname}")
-                    
-                except Exception as e:
+                    except Exception as e:
                     error_message = f"Failed to initialize NAPALM driver: {str(e)}"
                     logger.error(error_message)
                     device_facts["reachable"] = False
@@ -379,9 +411,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                 "reachable": True,
                 "errors": []
             } 
-        
-        # Set global driver to None in simulation or test mode
-        NAPALM_DEVICE_DRIVER = None
+          # Set global connection to None in simulation or test mode
+        NETMIKO_CONNECTION = None
     
     # Generate output for the writer
     if device_facts["reachable"]:
@@ -721,14 +752,13 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
             "command_outputs": command_outputs,
             "errors": errors
         }
-    else:
-        # Access the global NAPALM device driver
-        global NAPALM_DEVICE_DRIVER
+    else:        # Access the global Netmiko connection
+        global NETMIKO_CONNECTION
         
         # Create dependencies for the action executor
         deps = ActionExecutorDeps(
             current_step=current_step,
-            device_driver=NAPALM_DEVICE_DRIVER,  # Pass actual device driver object
+            device_driver=NETMIKO_CONNECTION,  # Pass actual Netmiko connection object
             device_facts=device_facts,
             settings=settings,
             logger=logger
@@ -902,16 +932,14 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
 
 async def run_result_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Generate a summary of troubleshooting results."""
-    logger.info("Running result summary node")
-
-    # Close the NAPALM device driver connection if it was opened
-    global NAPALM_DEVICE_DRIVER
-    if NAPALM_DEVICE_DRIVER:
+    logger.info("Running result summary node")    # Close the Netmiko connection if it was opened
+    global NETMIKO_CONNECTION
+    if NETMIKO_CONNECTION:
         try:
-            NAPALM_DEVICE_DRIVER.close()
-            logger.info("Closed NAPALM device driver connection")
+            NETMIKO_CONNECTION.disconnect()
+            logger.info("Closed Netmiko connection")
         except Exception as e:
-            logger.error(f"Error closing NAPALM device driver: {str(e)}")
+            logger.error(f"Error closing Netmiko connection: {str(e)}")
 
     writer("""\n\n## 📋 Troubleshooting Results Summary
     
