@@ -708,7 +708,7 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
         # Create simulated result structure
         simulated_output = []
         for command in commands:
-            command_output = test_data.get("commands", {}).get(command, "Output not available")
+            command_output = test_data.get("commands", {}).get(command, "ERROR: Simulated command output missing from test data")
             simulated_output.append({"cmd": command, "output": command_output})
 
         description = current_step.description
@@ -857,9 +857,8 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
 - **Reason:** {next_action_reason}
 
 
-""")
-
-    if next_action_type == "new_action":
+""")    # Process updated action plan for both "new_action" or "continue" with variable population
+    if analysis_report.updated_action_plan_remaining:
         action_plan_remaining = analysis_report.updated_action_plan_remaining
         # Generate human-readable output for the writer with Markdown formatting
         steps_markdown = []
@@ -873,9 +872,16 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
 {commands_list}
 - **🔍 Expected Output:** {step.output_expectation}
 - **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
+""")        # Different messages based on action type
+        if next_action_type == "new_action":
+            writer(f"""## 🔍 Action Plan Has Been Updated Based Upon Findings
+
+**Remaining Steps:** {len(action_plan_remaining)}
+
+{''.join(steps_markdown)}
 """)
-    
-        writer(f"""## 🔍 Action Plan Has Been Updated Based Upon Findings
+        else:  # continue with variable population
+            writer(f"""## 🔍 Variables Populated in Action Plan 
 
 **Remaining Steps:** {len(action_plan_remaining)}
 

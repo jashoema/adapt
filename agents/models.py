@@ -102,7 +102,7 @@ class ActionAnalysisReport(BaseModel):
     next_action_reason: str = Field(..., description="1-sentence justification for the next action type")
     updated_action_plan_remaining: Optional[List['TroubleshootingStep']] = Field(
         None, 
-        description="Optional list of action steps, included only when next_action_type is 'new_action'"
+        description="Optional list of action steps, included when next_action_type is 'new_action' or when populating variables in a 'continue' action"
     )
 
 # TroubleshootingStep

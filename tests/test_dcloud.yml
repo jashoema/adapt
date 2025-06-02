@@ -40,7 +40,7 @@ device_facts:
   errors: []
 
 commands:
-  show bgp ipv4 unicast neighbor 172.20.20.18: |-
+  show bgp ipv4 unicast neighbors 172.20.20.18: |-
     BGP neighbor is 172.20.20.18
       Remote AS 3334, local AS 65535, external link
       Remote router ID 10.200.10.4
@@ -341,6 +341,17 @@ commands:
     72   1000000003            ZTP       ZTP                 CLI         Fri May  9 06:36:58 2025
     73   1000000002            ZTP       ZTP                 CLI         Fri May  9 06:36:53 2025
     74   1000000001            CVAC      UNKNOWN             CLI         Fri May  9 06:36:46 2025
+  show configuration commit changes 1000000074: |-
+    !! Building configuration...
+    !! IOS XR Configuration 24.3.1
+    route-policy accept_from_AS_3334
+      if destination in ACCEPT_FROM_AS_3334_v2.0 then
+        pass
+      endif
+    end-policy
+    !
+    end
+  
   # show configuration commit changes 5: |-
   #   --- Begin diff for commit 5 ---
   #   @@ route-policy RP-ANOMALY

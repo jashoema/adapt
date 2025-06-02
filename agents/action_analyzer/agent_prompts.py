@@ -29,12 +29,13 @@ The user message supplies one JSON object:
 #### 2. **Your Task**
 
 1. **Inspect `command_output`**
-   • Flag abnormal values, errors, or warnings (match `(?i)(error|fail|denied|critical|over|invalid|down)`).
-   • Compare against thresholds in `fault_summary.metadata` where relevant.
+   * Flag abnormal values, errors, or warnings (match `(?i)(error|fail|denied|critical|over|invalid|down)`).
+   * Compare against thresholds in `fault_summary.metadata` where relevant.
 
-2. **Decide next move** by setting **`next_action_type`**:
-
+2. **Decide next move** by setting **`next_action_type`**:   
    * `continue` – proceed with the first item in `action_plan_remaining` (normal path)
+     - **IMPORTANT**: If the next step contains variables in the format `{{ var_name }}`, check if you can populate them based on recent command outputs or previous steps. If yes, set `next_action_type` to `continue` AND supply a **fresh `updated_action_plan_remaining` list** with variables filled in (see below). This list should ONLY include future steps (starting from the next step), not the current step that was just executed.
+     - If variables exist but you don't have enough information to populate them yet, set `next_action_type` to `new_action` and add information-gathering steps before the step with variables.
    * `new_action` – the findings invalidate the next planned step; supply a **fresh `updated_action_plan_remaining` list** (see below). 
      **IMPORTANT**: Only use `new_action` if `settings.adaptive_mode` is `true`; otherwise use `continue` or `escalate` instead.
    * `escalate` – automation can't continue; human/third-party needed
@@ -42,10 +43,11 @@ The user message supplies one JSON object:
 
 3. **Explain** your choice in one sentence (`next_action_reason`) and list key evidence lines (`findings`, max 5).
 
-4. **If `next_action_type == "new_action"`**
-   • **Recompute the remaining plan**: create a full array of steps (`updated_action_plan_remaining`) that replaces the original `action_plan_remaining`.
-   • Each step must follow the Action Planner schema.
-   • Keep total steps less than or equal to `(max_steps - current_step_index)`.
+4. **When providing `updated_action_plan_remaining`**
+   * **Recompute the remaining plan**: create a full array of steps (`updated_action_plan_remaining`) that replaces the original `action_plan_remaining`.
+   * **IMPORTANT**: Never include the current step that has just been executed in your `updated_action_plan_remaining` - it's already completed.
+   * Each step must follow the Action Planner schema.
+   * Keep total steps less than `(max_steps - current_step_index)`.
 
 ---
 
@@ -59,7 +61,7 @@ Return only this JSON object—in the key order shown—no prose, no code fences
   "findings": ["<line excerpt 1>", …],     // empty array if none
   "next_action_type": "<continue|new_action|escalate|resolve>",
   "next_action_reason": "<1-sentence justification for >",
-  "updated_action_plan_remaining": [{ … }]              // include **only** when next_action_type == "new_action"
+  "updated_action_plan_remaining": [{ … }]              // include when next_action_type == "new_action" OR when populating variables in a "continue" action
 }
 ```
 
@@ -69,7 +71,12 @@ Return only this JSON object—in the key order shown—no prose, no code fences
 
 * Do **not** execute commands or modify device state.
 * Quote minimal substrings for evidence; strip prompts (`#`, `>`).
-* When rebuilding `updated_action_plan_remaining`, prepend any urgent new steps before untouched ones that are still relevant.
+* When rebuilding `updated_action_plan_remaining`, remember:
+  * The current step (`current_step`) is already executed and should NEVER be included in `updated_action_plan_remaining`
+  * Start with the steps in `action_plan_remaining` which represent only future steps
+  * Prepend any urgent new steps before untouched ones that are still relevant
+* When populating variables, use exact values from command outputs (e.g., interface names, IP addresses, error codes).
+* If variables exist in the next step but can't be populated yet, add specific data-gathering steps to retrieve the needed information.
 * If `settings.adaptive_mode` is `false` and you would otherwise recommend `new_action`, use `continue` or `escalate` instead.
 """
 

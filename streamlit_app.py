@@ -94,6 +94,25 @@ st.set_page_config(
 def get_thread_id():
     return str(uuid.uuid4())
 
+def cancel_workflow():
+    """
+    Cancel the active LangGraph workflow execution.
+    
+    This function:
+    1. Resets the thread_id to generate a new one for future runs
+    2. Sets workflow_active flag to False
+    3. Reruns the Streamlit app to refresh UI state
+    
+    Since LangGraph threads are stateful and persist between runs,
+    generating a new thread_id effectively "cancels" the current execution
+    by ensuring future interactions won't continue the canceled workflow.
+    """
+    global thread_id
+    logger.info(f"Cancelling active workflow with thread_id: {thread_id}")
+    thread_id = reset_thread_id()
+    st.session_state.workflow_active = False
+    st.rerun()
+
 # Add a function to reset the thread_id cache when needed
 def reset_thread_id():
     get_thread_id.clear()
@@ -117,6 +136,9 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
             "thread_id": thread_id
         }
     }
+
+    # Set the workflow_active flag to True
+    st.session_state.workflow_active = True
 
     # Initialize node_output to store the output from each node when in step mode
     node_output = ""
@@ -177,6 +199,10 @@ else:
     for key, value in config_settings.items():
         if key not in st.session_state.settings:
             st.session_state.settings[key] = value
+
+# Initialize workflow_active flag if it doesn't exist
+if "workflow_active" not in st.session_state:
+    st.session_state.workflow_active = False
 
 # Add a title and description
 st.title("🤖 Autonomous Network Troubleshooter Dashboard")
@@ -357,6 +383,7 @@ with st.sidebar:
     if st.button("Reset Chat History", key="clear_chat"):
         st.session_state.messages = []
         thread_id = reset_thread_id()
+        st.session_state.workflow_active = False
         st.rerun()
 
 # --- Alert Queue Control Button ---
@@ -549,6 +576,13 @@ if user_input:
     # Display user message
     with st.chat_message("user"):
         st.markdown(user_input)
+    
+    # Check if we're cancelling an active workflow via a special command
+    if user_input.strip().lower() in ["cancel", "stop", "abort", "halt"] and st.session_state.workflow_active:
+        cancel_workflow()
+        with st.chat_message("assistant"):
+            st.markdown("⚠️ Workflow cancelled as requested. You can start a new conversation.")
+        st.stop()  # Stop further execution of this run
     
     # Display assistant response with a spinner
     with st.chat_message("assistant"):
