@@ -273,13 +273,14 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
       # Get settings and fault_summary from state
     settings = state["settings"]
     fault_summary = state["fault_summary"]
+    test_data = state.get("test_data", {})
     inventory = load_network_inventory(inventory_path)  # Load network inventory
     
     # Initialize device_facts with default values
     device_facts = {
         "reachable": True,
         "errors": []
-    }    # We no longer need to initialize device_driver_params as we're using global NAPALM_DEVICE_DRIVER
+    }    
     
     # Access the global NAPALM device driver
     global NAPALM_DEVICE_DRIVER
@@ -357,22 +358,27 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
             device_facts["reachable"] = False
             device_facts["errors"].append(error_message)
     else:
-        # Simulation mode - create simulated facts
+        # Simulation mode or test mode
         hostname = fault_summary.hostname
-        device_facts = {
-            "hostname": hostname,
-            "vendor": "cisco",
-            "model": "CSR1000v",
-            "uptime": 12345,
-            "os_version": "16.9.3",
-            "serial_number": "9KLAVM0JJ62",
-            "interface_list": ["GigabitEthernet0/0", "GigabitEthernet0/1", "Loopback0"],
-            "fqdn": f"{hostname}.example.com",
-            "reachable": True,
-            "errors": []
-        }        # We no longer need simulated driver parameters as we're using the global NAPALM_DEVICE_DRIVER
+        # If in test_mode and test_data contains device_facts, use those
+        if settings.get("test_mode", False) and test_data and "device_facts" in test_data:
+            device_facts = test_data["device_facts"]
+        else:
+            # Simulation mode - create simulated facts
+            device_facts = {
+                "hostname": hostname,
+                "vendor": "cisco",
+                "model": "CSR1000v",
+                "uptime": 12345,
+                "os_version": "16.9.3",
+                "serial_number": "9KLAVM0JJ62",
+                "interface_list": ["GigabitEthernet0/0", "GigabitEthernet0/1", "Loopback0"],
+                "fqdn": f"{hostname}.example.com",
+                "reachable": True,
+                "errors": []
+            } 
         
-        # Set global driver to None in simulation mode
+        # Set global driver to None in simulation or test mode
         NAPALM_DEVICE_DRIVER = None
     
     # Generate output for the writer
