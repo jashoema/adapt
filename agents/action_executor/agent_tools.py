@@ -10,7 +10,7 @@ from pydantic_ai import RunContext, ModelRetry
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("action_executor.agent_tools")
 
-async def execute_cli_commands(ctx: RunContext) -> dict:
+async def execute_cli_commands(ctx: RunContext, commands: list[str]) -> dict:
     """
     Execute CLI commands on a network device using NAPALM.
     
@@ -74,7 +74,7 @@ async def execute_cli_commands(ctx: RunContext) -> dict:
             results[command] = f"ERROR: {error_msg}"
         return results
 
-async def execute_cli_config(ctx: RunContext) -> dict:
+async def execute_cli_config(ctx: RunContext, commands: list[str]) -> dict:
     """
     Execute configuration commands on a network device using NAPALM.
     
