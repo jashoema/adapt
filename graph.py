@@ -335,7 +335,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     
                     # Get device facts
                     device_facts = NAPALM_DEVICE_DRIVER.get_facts()
-                    # Add reachable and errors fields
+                    # Add os, reachable, and errors fields
+                    device_facts["os"] = device_details.get("device_type")
                     device_facts["reachable"] = True
                     device_facts["errors"] = []
                     
@@ -374,6 +375,7 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                 "serial_number": "9KLAVM0JJ62",
                 "interface_list": ["GigabitEthernet0/0", "GigabitEthernet0/1", "Loopback0"],
                 "fqdn": f"{hostname}.example.com",
+                "os": "ios",
                 "reachable": True,
                 "errors": []
             } 
@@ -636,7 +638,7 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
             
             # 7-8. Handle user approval response
             if response_text.lower().strip() in yes_responses:
-                writer("✅ **Action approved by user. Proceeding to execution.**")
+                writer("✅ **Action approved by user. Proceeding to execution.**\n\n")
                 return Command(
                     update={
                         "action_plan_history": action_plan_history,
@@ -647,7 +649,7 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
                     goto="action_executor"
                 )
             elif response_text.lower().strip() in no_responses:
-                writer("🛑 **Action rejected by user. Routing to result summary.**")
+                writer("🛑 **Action rejected by user. Routing to result summary.**\n\n")
                 current_step.analysis_report = ActionAnalysisReport(
                     analysis="No analysis performed due to action being rejected by user.",
                     findings=[],
