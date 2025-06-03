@@ -615,21 +615,30 @@ if user_input:
                 elif agent_type == "Full Multi-Agent Workflow":
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Multi-Agent Workflow", extra={"user_input": user_input})
-                    
                     response_content = ""
                     async for chunk in run_agent_with_streaming(user_input, settings=st.session_state.settings):
                         response_content += chunk
                         # Update the placeholder with the current response content
                         message_placeholder.markdown(response_content)
 
-                    # Log the response to a file
+                    # Generate filename with timestamp
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    workbench_path = os.path.join("workbench", f"responses_{timestamp}.md")
+                    response_filename = f"responses_{timestamp}.md"
+                    
+                    # Save to workbench directory
+                    workbench_path = os.path.join("workbench", response_filename)
                     os.makedirs("workbench", exist_ok=True)
                     with open(workbench_path, "w", encoding="utf-8") as f:
                         f.write(response_content)
-
+                    
+                    # Save to static directory for direct URL access
+                    static_path = os.path.join("static", response_filename)
+                    os.makedirs("static", exist_ok=True)
+                    with open(static_path, "w", encoding="utf-8") as f:
+                        f.write(response_content)
+                        
                     return response_content
+                    
                 elif agent_type == "Fault Summarizer Agent":
                     if st.session_state.settings["debug_mode"]:
                         agent_logger.info("Running Fault Summarizer Agent", extra={"user_input": user_input})
