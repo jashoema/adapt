@@ -20,8 +20,9 @@ import json
 from pathlib import Path
 
 from dotenv import load_dotenv
-import napalm
+from netmiko import ConnectHandler
 from pydantic import BaseModel, Field
+from agents.action_executor.netmiko_utils import parse_device_facts, get_interface_list
 from langgraph.types import interrupt, Command
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -32,6 +33,7 @@ from agents.fault_summary import run as run_fault_summary
 from agents.action_planner import run as run_action_planner
 from agents.action_executor import run as run_action_executor
 from agents.action_analyzer import run as run_action_analyzer
+from agents.result_summary import run as run_result_summary
 
 # Import models from the central models.py file
 from agents.models import (
@@ -42,15 +44,17 @@ from agents.models import (
     ActionPlannerDependencies,
     ActionExecutorDeps,
     ActionAnalyzerDependencies,
+    ResultSummaryDependencies,
+    ResultSummary,
     DeviceCredentials
 )
 
 # Load environment variables
 load_dotenv()
 
-# Global variable for NAPALM device driver
+# Global variable for Netmiko connection
 # Will be initialized in run_init_deps_node and passed to run_action_executor_node
-NAPALM_DEVICE_DRIVER = None
+NETMIKO_CONNECTION = None
 
 # Path to the network device inventory YAML file
 inventory_path = os.getenv("INVENTORY_PATH", "configuration/inventory.yml")
@@ -281,9 +285,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
         "reachable": True,
         "errors": []
     }    
-    
-    # Access the global NAPALM device driver
-    global NAPALM_DEVICE_DRIVER
+      # Access the global Netmiko connection
+    global NETMIKO_CONNECTION
     
     # Only perform actual device connection when not in simulation or test mode
     if not settings.get("simulation_mode", True) and not settings.get("test_mode", False):
@@ -304,37 +307,70 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     if not device_type:
                         raise ValueError(f"Device type not specified for {hostname}")
 
-                    # Get connection parameters - store only serializable parameters
+                    # Get connection parameters
                     host = device_details.get("hostname")
                     username = device_details.get("username")
                     password = device_details.get("password")
                     optional_args = device_details.get("optional_args", {})
                     
-                    # Close the existing driver if it's already open
-                    if NAPALM_DEVICE_DRIVER:
+                    # Close the existing connection if it's already open
+                    if NETMIKO_CONNECTION:
                         try:
-                            NAPALM_DEVICE_DRIVER.close()
-                            logger.info(f"Closed existing NAPALM connection before creating a new one")
+                            NETMIKO_CONNECTION.disconnect()
+                            logger.info(f"Closed existing Netmiko connection before creating a new one")
                         except Exception as e:
                             # Do nothing because the connection has probably already been closed
                             pass
 
-                    # Get the NAPALM driver class for the device type
-                    driver = napalm.get_network_driver(device_type)
+                    # Map device_type to Netmiko device type - add more mappings as needed
+                    netmiko_device_type_map = {
+                        'ios': 'cisco_ios',
+                        'iosxr': 'cisco_xr',
+                        'nxos': 'cisco_nxos',
+                        'junos': 'juniper_junos'
+                    }
                     
-                    # Initialize the global NAPALM device driver
-                    NAPALM_DEVICE_DRIVER = driver(
-                        hostname=host,
-                        username=username,
-                        password=password,
-                        optional_args=optional_args
-                    )
+                    netmiko_device_type = netmiko_device_type_map.get(device_type, device_type)
                     
-                    # Open connection and get facts
-                    NAPALM_DEVICE_DRIVER.open()
+                    # Create a device dictionary for Netmiko
+                    device_dict = {
+                        'device_type': netmiko_device_type,
+                        'host': host,
+                        'username': username,
+                        'password': password,
+                        'port': optional_args.get('port', 22),
+                    }
                     
-                    # Get device facts
-                    device_facts = NAPALM_DEVICE_DRIVER.get_facts()
+                    # Add optional secret if it exists
+                    if 'secret' in optional_args and optional_args['secret']:
+                        device_dict['secret'] = optional_args['secret']
+                    
+                    # Initialize the global Netmiko connection
+                    NETMIKO_CONNECTION = ConnectHandler(**device_dict)
+                      # Get device facts using Netmiko commands
+                    facts = {}
+                    try:
+                        # Get hostname
+                        output = NETMIKO_CONNECTION.send_command('show version')
+                        facts['hostname'] = hostname
+                        
+                        # Parse facts based on device type
+                        parsed_facts = parse_device_facts(netmiko_device_type, output)
+                        facts.update(parsed_facts)
+                        
+                        # Get interfaces using helper function
+                        facts['interface_list'] = get_interface_list(NETMIKO_CONNECTION, netmiko_device_type)
+                                    
+                        # Default fallback - use what we have                        
+                        if 'fqdn' not in facts:
+                            facts['fqdn'] = f"{hostname}.example.com"  # Default placeholder
+                        
+                    except Exception as e:
+                        logger.warning(f"Error getting detailed facts: {str(e)}. Using basic facts.")
+                    
+                    # Update device_facts with what we gathered
+                    device_facts.update(facts)
+                    
                     # Add os, reachable, and errors fields
                     device_facts["os"] = device_details.get("device_type")
                     device_facts["reachable"] = True
@@ -344,7 +380,6 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     
                     # Log successful connection
                     logger.info(f"Successfully connected to {hostname}")
-                    
                 except Exception as e:
                     error_message = f"Failed to initialize NAPALM driver: {str(e)}"
                     logger.error(error_message)
@@ -379,9 +414,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                 "reachable": True,
                 "errors": []
             } 
-        
-        # Set global driver to None in simulation or test mode
-        NAPALM_DEVICE_DRIVER = None
+          # Set global connection to None in simulation or test mode
+        NETMIKO_CONNECTION = None
     
     # Generate output for the writer
     if device_facts["reachable"]:
@@ -528,7 +562,7 @@ async def run_action_router_node(state: NetworkTroubleshootingState, writer) -> 
                 if current_step:
                     # Create an analysis report to indicate the step limit was exceeded
                     current_step.analysis_report = ActionAnalysisReport(
-                        analysis=[f"Maximum step count of {max_steps} has been exceeded"],
+                        analysis=f"Maximum step count of {max_steps} has been exceeded",
                         findings=[f"Workflow exceeded maximum allowed steps ({max_steps})"],
                         next_action_type="escalate",
                         next_action_reason=f"Maximum step count of {max_steps} has been exceeded. Escalating for human intervention."
@@ -721,14 +755,13 @@ async def run_action_executor_node(state: NetworkTroubleshootingState, writer) -
             "command_outputs": command_outputs,
             "errors": errors
         }
-    else:
-        # Access the global NAPALM device driver
-        global NAPALM_DEVICE_DRIVER
+    else:        # Access the global Netmiko connection
+        global NETMIKO_CONNECTION
         
         # Create dependencies for the action executor
         deps = ActionExecutorDeps(
             current_step=current_step,
-            device_driver=NAPALM_DEVICE_DRIVER,  # Pass actual device driver object
+            device_driver=NETMIKO_CONNECTION,  # Pass actual Netmiko connection object
             device_facts=device_facts,
             settings=settings,
             logger=logger
@@ -903,23 +936,155 @@ async def run_action_analyzer_node(state: NetworkTroubleshootingState, writer) -
 async def run_result_summary_node(state: NetworkTroubleshootingState, writer) -> NetworkTroubleshootingState:
     """Generate a summary of troubleshooting results."""
     logger.info("Running result summary node")
-
-    # Close the NAPALM device driver connection if it was opened
-    global NAPALM_DEVICE_DRIVER
-    if NAPALM_DEVICE_DRIVER:
-        try:
-            NAPALM_DEVICE_DRIVER.close()
-            logger.info("Closed NAPALM device driver connection")
-        except Exception as e:
-            logger.error(f"Error closing NAPALM device driver: {str(e)}")
-
-    writer("""\n\n## 📋 Troubleshooting Results Summary
     
-**This is a stub implementation of the result_summary node.**
+    # Close the Netmiko connection if it was opened
+    global NETMIKO_CONNECTION
+    if NETMIKO_CONNECTION:
+        try:
+            NETMIKO_CONNECTION.disconnect()
+            logger.info("Closed Netmiko connection")
+        except Exception as e:
+            logger.error(f"Error closing Netmiko connection: {str(e)}")
+            
+    # Get the necessary state data
+    fault_summary = state.get("fault_summary")
+    action_plan_history = state.get("action_plan_history", [])
+    action_plan_remaining = state.get("action_plan_remaining", [])
+    current_step = state.get("current_step")
+    current_step_index = state.get("current_step_index", 0)
+    alert_raw_data = state.get("alert_raw_data", "")
+    device_facts = state.get("device_facts", {})
+    settings = state.get("settings", {})
+    action_plan = state.get("action_plan", [])
+    action_executor_history = state.get("action_executor_history", [])
+    
+    # Create dependencies for the result summary agent
+    deps = ResultSummaryDependencies(
+        fault_summary=fault_summary,
+        action_plan_history=action_plan_history,
+        action_plan_remaining=action_plan_remaining,
+        current_step=current_step,
+        current_step_index=current_step_index,
+        alert_raw_data=alert_raw_data,
+        device_facts=device_facts,
+        settings=settings,
+        logger=logger
+    )
+      # Run the result summary agent
+    result = await run_result_summary(deps=deps)
+    summary = result.output
+    
+    # Prepare numbered lists for key sections
+    key_findings_list = "\n\n".join([f"**{i+1}.** {finding}" for i, finding in enumerate(summary.key_findings)])
+    recommended_steps = "\n\n".join([f"**{i+1}.** {step}" for i, step in enumerate(summary.recommended_next_steps)])
+    
+    # Format successful and failed actions with appropriate icons
+    successful_actions = "\n\n".join([f"✅ {action}" for action in summary.successful_actions]) if summary.successful_actions else "None"
+    failed_actions = "\n\n".join([f"❌ {action}" for action in summary.failed_actions]) if summary.failed_actions else "None"
+    
+    # Determine resolution status emoji
+    status_emoji = "✅" if summary.resolution_status.lower() == "resolved" else "⚠️" if "partial" in summary.resolution_status.lower() else "❌"
+    
+    # Generate human-readable output for the writer with enhanced Markdown formatting
+    writer(f"""\n\n## 📋 Troubleshooting Results Summary
 
-This node will provide a comprehensive summary of all troubleshooting actions performed,
-including successful and failed steps, and recommendations for next actions.
+### 🔍 {summary.summary_title}
+
+**Fault Recap:** {summary.fault_recap}  
+**Resolution Status:** {status_emoji} {summary.resolution_status}
+
+---
+
+### 💡 Key Findings:
+{key_findings_list}
+
+---
+
+### ✅ Successful Actions:
+{successful_actions}
+
+### ❌ Failed Actions:
+{failed_actions}
+
+---
+
+### 🔎 Root Cause:
+{summary.root_cause if summary.root_cause else "Not determined"}
+
+---
+
+### 📝 Recommended Next Steps:
+{recommended_steps}
+
+{f"---\n\n### ⚠️ Escalation Details:\n{summary.escalation_details}" if summary.escalation_details else ""}
+
+---
+
+### ⏱️ Execution Metrics:
+```
+Total Execution Time: {summary.time_metrics.get('total_execution_time', 'N/A')}
+Steps Executed: {summary.time_metrics.get('steps_executed', 0)}
+```
 """)
+    
+    # Create a JSON payload with all required state data plus result summary
+    results_payload = {
+        "alert_raw_data": alert_raw_data,
+        "fault_summary": fault_summary.model_dump() if fault_summary else None,
+        "action_plan": [step.model_dump() for step in action_plan] if action_plan else [],
+        "action_plan_history": [step.model_dump() for step in action_plan_history] if action_plan_history else [],
+        "action_plan_remaining": [step.model_dump() for step in action_plan_remaining] if action_plan_remaining else [],
+        "current_step_index": current_step_index,
+        "current_step": current_step.model_dump() if current_step else None,
+        "action_executor_history": action_executor_history,
+        "device_facts": device_facts,
+        "settings": {k: v for k, v in settings.items() if k != "logger"},  # Exclude non-serializable logger
+        "result_summary": summary.model_dump()  # Add the result_summary output
+    }    # Generate filename with current datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_filename = f"results_{timestamp}.json"
+    workbench_path = Path("workbench")  # Using Path from pathlib for cross-platform compatibility
+    static_path = Path("static")  # Path for static file serving
+    
+    try:
+        # Ensure directories exist
+        workbench_path.mkdir(exist_ok=True)
+        static_path.mkdir(exist_ok=True)
+        
+        # Save the JSON payload to file in the workbench folder
+        full_path = workbench_path / results_filename
+        with open(full_path, 'w') as f:
+            json.dump(results_payload, f, indent=2, default=str)  # Use default=str to handle any datetime objects
+        
+        # Save a copy to the static folder for direct URL access
+        static_full_path = static_path / results_filename
+        with open(static_full_path, 'w') as f:
+            json.dump(results_payload, f, indent=2, default=str)
+            
+        logger.info(f"Results saved to {full_path} and {static_full_path}")
+          # Add the URL link to the results file in the writer output
+        writer(f"""
+### 📊 Results JSON Data
+
+The complete troubleshooting results are available as a JSON file.
+
+**Direct link:** [results_{timestamp}.json](/app/static/{results_filename})
+
+This file can be used for:
+- Importing into data analysis tools
+- Saving as part of incident documentation
+- Processing with other automation systems
+
+### 📋 Detailed Result Log
+
+The complete troubleshooting session log is available for reference.
+
+**Direct link:** [responses_{timestamp}.md](/app/static/responses_{timestamp}.md)
+
+*This file contains the entire troubleshooting workflow and can be used for documentation or review purposes.*
+""")
+    except Exception as e:
+        logger.error(f"Error saving results to file: {str(e)}")
     
     return {
         **state,

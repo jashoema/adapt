@@ -51,6 +51,7 @@ streamlit run streamlit_app.py
   - `inventory.yml`: Network device inventory
   - `settings.yml`: Application settings
 - `graph.py`: LangGraph implementation for the multi-agent workflow
+- `static/`: Directory for files served via direct URLs
 - `streamlit_app.py`: Main Streamlit application
 - `tests/`: Test scenarios for simulation mode
 - `utils/`: Utility functions and helpers
@@ -64,6 +65,8 @@ streamlit run streamlit_app.py
   - **Production Mode**: Connect to and execute commands on real network devices
 
 - **Golden Rules**: Configure safety rules that are always followed by agents
+
+- **Direct Result Access**: Troubleshooting results and response logs are saved as files with direct URL links for easy access and integration with other systems
 
 - **Multi-Agent Workflow**: End-to-end troubleshooting using multiple specialized agents
 
