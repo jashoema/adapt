@@ -84,7 +84,7 @@ def load_test_file_preview(test_name: str) -> str:
 
 # Set page configuration
 st.set_page_config(
-    page_title="Autonomous Network Troubleshooter Dashboard",
+    page_title="ADAPT - Autonomous Network Troubleshooter",
     page_icon="🤖",
     layout="centered"
 )
@@ -205,7 +205,7 @@ if "workflow_active" not in st.session_state:
     st.session_state.workflow_active = False
 
 # Add a title and description
-st.title("🤖 Autonomous Network Troubleshooter Dashboard")
+st.title("🤖 ADAPT - Autonomous Network Troubleshooter")
 
 # Track Alert Queue process info in session state
 if 'alert_queue_process' not in st.session_state:
@@ -446,13 +446,14 @@ elif agent_type == "Action Analyzer Agent":
     st.markdown("This agent analyzes the output of network commands and provides structured insights, findings, and recommendations.")
     st.info("Enter a network command output to analyze, or paste the full output of a previous command execution.")
 elif agent_type == "Full Multi-Agent Workflow":
-    st.markdown("### 🔄 Multi-Agent Network Troubleshooter")
-    st.markdown("This workflow connects all agents together using LangGraph to provide end-to-end network troubleshooting.")
-    st.markdown("Describe a network issue, and the workflow will run through these steps:")
+    st.markdown("### 🔄 Multi-Agent Network Troubleshooting System")
+    st.markdown("ADAPT is an autonomous troubleshooting system that adjusts its actions based on real-time findings.")
+    st.markdown("Describe a network fault or send a network alert, and the workflow will run through these steps:")
     st.markdown("1. 🔧 **Fault Summary**: Analyze and summarize the issue")
-    st.markdown("2. 🔍 **Action Planning**: Create a troubleshooting plan with specific steps")
-    st.markdown("3. 🖥️ **Action Execution**: Execute each step of the plan")
-    st.markdown("4. 📊 **Action Analysis**: Analyze the output of each step")
+    st.markdown("2. 🔍 **Action Planning**: Create a troubleshooting plan with specific steps towards diagnosing and resolving the issue")
+    st.markdown("3. 🖥️ **Action Execution**: Execute each step of the plan, interacting with live network devices")
+    st.markdown("4. 🧠 **Action Analysis**: Analyze the output of each step and decide what's next")
+    st.markdown("5. 📊 **Result Summary**: Provide a comprehensive report of actions taken, findings, and recommendations")
     if st.session_state.settings["test_mode"]:
         st.info(f"Running in TEST MODE with scenario: {test_name or 'None selected'}")
     elif st.session_state.settings["simulation_mode"]:
