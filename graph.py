@@ -89,7 +89,10 @@ def load_settings(file_path: str) -> Dict[str, Any]:
         "test_mode": False,
         "test_name": "",
         "max_steps": 15,
-        "golden_rules": []
+        "step_mode:": False,
+        "adaptive_mode:": True,
+        "golden_rules": [],
+        "recursion_limit": 50
     }
     
     try:
@@ -169,6 +172,16 @@ def load_network_inventory(file_path: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error loading inventory: {str(e)}")
         return default_inventory
+    
+# Set the graph invocation paramters
+def set_invoke_config(thread_id, recursion_limit):
+    config = {
+        "configurable": {
+            "thread_id": thread_id
+        },
+        "recursion_limit": recursion_limit
+    }
+    return config
 
 # Load network inventory
 network_inventory = load_network_inventory(inventory_path)
