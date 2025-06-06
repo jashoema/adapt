@@ -22,6 +22,9 @@ from utils.streamlit_logger import get_streamlit_logger
 # Import settings loader from graph.py
 from graph import load_settings, settings_path
 
+# Import graph invocation config parameter function from graph.py
+from graph import set_invoke_config
+
 # Create a main logger for the streamlit app
 logger = get_streamlit_logger("streamlit_app")
 
@@ -131,12 +134,7 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
     if settings is None:
         settings = {"simulation_mode": True, "debug_mode": False}
         
-    config = {
-        "configurable": {
-            "thread_id": thread_id
-        },
-        "recursion_limit": 50
-    }
+    config = set_invoke_config(thread_id, settings.get("recursion_limit", 25))
 
     # Set the workflow_active flag to True
     st.session_state.workflow_active = True
