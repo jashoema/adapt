@@ -242,17 +242,15 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     result = await run_fault_summary(alert_raw_data, deps=fault_summary_deps)
     fault_summary = result.output
 
-    # Generate output showing the raw alert that was received
+    # Generate output showing the raw alert that was received and display fault summary
     writer(f"""## 🚨 Alert Received
 
 The following alert has been received:
 ```
 {alert_raw_data}
 ```
-""")
 
-    # Generate human-readable output for the writer based on FaultSummary class structure with Markdown formatting
-    writer(f"""\n\n## 📊 Fault Summary
+## 📊 Fault Summary
 
 **Title:** {fault_summary.title}  
 **Summary:** {fault_summary.summary}  
@@ -481,9 +479,7 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     
     # Run the action planner agent with the dependencies
     result = await run_action_planner("", deps=deps)
-    action_plan = result.output
-
-    # Generate human-readable output for the writer with Markdown formatting
+    action_plan = result.output    # Generate human-readable output for the writer with Markdown formatting
     steps_markdown = []
     for i, step in enumerate(action_plan):
         # Format commands as a bulleted list
@@ -497,7 +493,24 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
 - **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
 """)
     
-    writer(f"""## 🔍 Action Plan
+    # Add note about custom instructions if they exist
+    custom_instructions_section = ""
+    if custom_instructions:
+        custom_instructions_section = f"""\n\n### ⚠️ Note: Custom Instructions Applied
+
+The following custom instructions have been identified for this fault and integrated into the action plan:
+
+```
+{custom_instructions}
+```
+
+"""
+    
+    writer(f"""
+
+{custom_instructions_section}
+
+## 🔍 Action Plan
 
 **Total Steps:** {len(action_plan)}
 
