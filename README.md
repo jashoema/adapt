@@ -4,7 +4,8 @@ AI-Driven Action Planner & Troubleshooter (ADAPT)
 
 ## Requirements
 
-- Needs Python 3.12 and above
+- Python 3.12 and above
+- Docker (optional, for containerized deployment)
 
 ## Overview
 
@@ -20,23 +21,80 @@ The workflow consists of the following AI agents:
 
 ## Setup
 
+### Option 1: Python Native with Virtual Environment
+
 1. Clone this repository
-2. Install dependencies:
+2. Create and activate a virtual environment:
+   ```
+   python -m venv venv
+   venv\Scripts\activate  # Windows
+   # OR
+   source venv/bin/activate  # Linux/Mac
+   ```
+3. Install dependencies:
    ```
    pip install -r requirements.txt
    ```
-3. Create a `.env` file with your OpenAI API key:
+4. Create a `.env` file with your OpenAI API key:
    ```
    OPENAI_API_KEY=your_api_key_here
    ```
 
+### Option 2: Docker Compose
+
+1. Clone this repository
+
+2. **Prerequisites**:
+   - [Docker](https://www.docker.com/get-started) installed on your system
+
+3. **Environment Variables Configuration**:
+   - Copy the example environment file to create your own:
+     ```
+     copy .env.example .env
+     ```
+   - Edit the `.env` file with your configuration values:
+     ```
+     OPENAI_API_KEY=your_api_key_here
+     ```
+     - Configure any device hostname, type, and port settings
+     - Add any other environment variables needed by the application
+
+4. **Build and run** with Docker Compose:
+   ```
+   docker-compose up -d
+   ```
+   
+   To rebuild after code changes:
+   ```
+   docker-compose up --build -d
+   ```
+   
+   To stop the container:
+   ```
+   docker-compose down
+   ```
+
+5. **Mounted Volumes**:
+   The following directories are mounted from the host into the container:
+   - **./workbench:/app/workbench**: For persistent data storage
+   - **./configuration:/app/configuration**: For device inventories and settings files
+
+   Any changes made to these directories on the host will be immediately reflected in the container.
+
 ## Running the Application
 
+### Python Native
 Launch the Streamlit application:
 
 ```
 streamlit run streamlit_app.py
 ```
+
+### Docker
+When using Docker, the application runs automatically with the following services:
+
+- **Streamlit Application**: Accessible at `http://localhost:8501`
+- **Alert Queue Service**: Exposed on port 8001 (can be started through the Streamlit interface when needed)
 
 ## Project Structure
 

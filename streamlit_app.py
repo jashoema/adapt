@@ -134,7 +134,8 @@ async def run_agent_with_streaming(user_input: str, settings: Dict[str, bool] = 
     config = {
         "configurable": {
             "thread_id": thread_id
-        }
+        },
+        "recursion_limit": 50
     }
 
     # Set the workflow_active flag to True
