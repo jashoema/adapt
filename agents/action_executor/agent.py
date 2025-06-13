@@ -8,7 +8,7 @@ from pydantic_ai import Agent, RunContext, ModelRetry
 
 from .agent_tools import execute_cli_commands, execute_cli_config
 from .agent_prompts import SYSTEM_PROMPT
-from ..models import DeviceCredentials, CommandOutput, ActionExecutorOutput, TroubleshootingStep, ActionExecutorDeps
+from ..models import CommandOutput, ActionExecutorOutput, TroubleshootingStep, ActionExecutorDeps
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)

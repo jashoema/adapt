@@ -1,7 +1,6 @@
 # ADAPT
 
 AI-Driven Action Planner & Troubleshooter (ADAPT)
-(This is a placeholder name - help me find a better one!)
 
 ## Requirements
 
@@ -11,7 +10,7 @@ AI-Driven Action Planner & Troubleshooter (ADAPT)
 
 ADAPT is an autonomous network troubleshooting system that uses AI-driven agents to diagnose and solve network issues. The system utilizes a multi-agent workflow powered by LangGraph to provide intelligent, step-by-step troubleshooting of network problems.
 
-The workflow consists of the following agents:
+The workflow consists of the following AI agents:
 
 1. **Fault Summarizer**: Analyzes network alerts and summarizes the issue
 2. **Action Planner**: Creates a detailed troubleshooting plan with specific commands
@@ -74,6 +73,18 @@ streamlit run streamlit_app.py
 
 - **Individual Agent Testing**: Each agent can be tested independently through the UI
 
+## Roadmap and Known Issues
+
+See the [CHANGELOG.md](./CHANGELOG.md) for a list of known issues and planned improvements for upcoming releases.
+
 ## Contributing
 
-Feel free to contribute by adding new agents or enhancing existing ones.
+We welcome contributions to ADAPT! Here's how you can contribute:
+
+1. **Fork the repository** on GitHub
+2. **Create a branch** for your changes
+3. **Make your changes** (new agents, bug fixes, documentation, etc.)
+4. **Submit a pull request** back to the main repository
+
+For questions or suggestions, please open an issue on GitHub.
+

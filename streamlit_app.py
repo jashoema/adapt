@@ -36,7 +36,7 @@ from agents.fault_summary.agent import FaultSummaryDependencies
 from agents.action_planner import run as run_action_planner
 from agents.action_executor import run as run_action_executor
 from agents.action_analyzer import run as run_action_analyzer
-from agents.action_executor.agent import DeviceCredentials, ActionExecutorDeps
+from agents.action_executor.agent import ActionExecutorDeps
 from agents.action_planner.agent import ActionPlannerDependencies, TroubleshootingStep
 from agents.fault_summary.agent import FaultSummary
 from agents.action_analyzer.agent import ActionAnalyzerDependencies
@@ -237,13 +237,17 @@ with st.sidebar:
     #     index=0
     # )
     
+    # Determine if controls should be disabled (when not using Full Multi-Agent Workflow)
+    disable_controls = agent_type != "Full Multi-Agent Workflow"
+    
     # Add toggles for settings
     st.header("Settings")
-    simulation_mode = st.toggle("Simulation Mode", value=st.session_state.settings["simulation_mode"], help="Enable simulation mode to run commands without actual execution")
+    simulation_mode = st.toggle("Simulation Mode", value=st.session_state.settings["simulation_mode"], disabled=disable_controls, help="Enable simulation mode to run commands without actual execution")
     debug_mode = st.toggle("Debug Mode", value=st.session_state.settings["debug_mode"], disabled=True, help="Enable debug mode for additional logging and information")
 
     # Test mode toggle and test scenario selection
     test_mode = st.toggle("Test Mode", value=st.session_state.settings["test_mode"], 
+                disabled=disable_controls,
                 help="Enable test mode to use predefined test data instead of real executions")
     
     # If test mode is enabled, show test scenario selection
@@ -257,7 +261,8 @@ with st.sidebar:
                 index=None,
                 placeholder="Choose a test scenario...",
                 help="Select a predefined test scenario to run",
-                key="test_scenario_select"
+                key="test_scenario_select",
+                disabled=disable_controls
             )
             
             # Initialize with the saved value if available
@@ -267,7 +272,7 @@ with st.sidebar:
             
             # Add Run Test button if a test scenario is selected
             if test_name:
-                run_test_button = st.button("Run Test", key="run_test_button", help="Run the selected test scenario")
+                run_test_button = st.button("Run Test", key="run_test_button", help="Run the selected test scenario", disabled=disable_controls)
                 if run_test_button:
                     st.session_state.settings["test_name"] = test_name
                     st.session_state.test_user_input = f"Run test scenario: {test_name}"
@@ -293,6 +298,7 @@ with st.sidebar:
         max_value=25,
         value=st.session_state.settings["max_steps"],
         step=1,
+        disabled=disable_controls,
         help="Maximum number of steps to execute before escalating to human intervention"
     )
     
@@ -300,6 +306,7 @@ with st.sidebar:
     adaptive_mode = st.toggle(
         "Adaptive Mode", 
         value=st.session_state.settings.get("adaptive_mode", True),
+        disabled=disable_controls,
         help="When enabled, allows the Action Analyzer to recommend new troubleshooting steps based on analysis"
     )
     
@@ -307,11 +314,12 @@ with st.sidebar:
     step_mode = st.toggle(
         "Step Mode",
         value=st.session_state.settings.get("step_mode", False),
+        disabled=disable_controls,
         help="When enabled, pauses between execution of each node in the workflow and waits for user input before proceeding"
     )
 
     # Golden Rules section with popover
-    with st.popover("Golden Rules"):
+    with st.popover("Golden Rules", disabled=disable_controls):
         st.caption("These rules are always followed by the agentic workflow:")
         
         # Initialize golden_rules if not already in session_state.settings
@@ -322,25 +330,25 @@ with st.sidebar:
         for i, rule in enumerate(st.session_state.settings["golden_rules"]):
             col1, col2 = st.columns([5, 1])
             with col1:
-                rule_text = st.text_input(f"Rule {i+1}", value=rule, key=f"rule_{i}")
+                rule_text = st.text_input(f"Rule {i+1}", value=rule, key=f"rule_{i}", disabled=disable_controls)
                 # Update rule text if changed
                 if rule_text != rule:
                     st.session_state.settings["golden_rules"][i] = rule_text
             
             with col2:
-                if st.button("🗑️", key=f"delete_rule_{i}"):
+                if st.button("🗑️", key=f"delete_rule_{i}", disabled=disable_controls):
                     st.session_state.settings["golden_rules"].pop(i)
                     st.rerun()
         
         # Add new rule
-        new_rule = st.text_input("Add new rule", key="new_rule_input")
-        if st.button("Add Rule", key="add_rule_btn"):
+        new_rule = st.text_input("Add new rule", key="new_rule_input", disabled=disable_controls)
+        if st.button("Add Rule", key="add_rule_btn", disabled=disable_controls):
             if new_rule.strip():
                 st.session_state.settings["golden_rules"].append(new_rule)
                 st.rerun()
     
     # Custom Instructions section with popover
-    with st.popover("Custom Instructions"):
+    with st.popover("Custom Instructions", disabled=disable_controls):
         st.caption("Add any custom instructions for the agentic workflow:")
         # Initialize custom_instructions in settings if not already present
         if "custom_instructions" not in st.session_state.settings:
@@ -350,6 +358,7 @@ with st.sidebar:
             value=st.session_state.settings["custom_instructions"],
             key="custom_instructions_input",
             height=100,
+            disabled=disable_controls,
             help="Provide any custom instructions or context for the workflow."
         )
         if custom_instructions != st.session_state.settings["custom_instructions"]:
@@ -358,14 +367,14 @@ with st.sidebar:
     # Persist settings and reset buttons on the same line
     col_save, col_reset = st.columns([1, 1])
     with col_save:
-        if st.button("Save Settings"):
+        if st.button("Save Settings", disabled=disable_controls):
             success = save_settings(st.session_state.settings)
             if success:
                 st.success("Settings saved successfully!")
             else:
                 st.error("Failed to save settings.")
     with col_reset:
-        if st.button("Default Settings"):
+        if st.button("Default Settings", disabled=disable_controls):
             config_settings = load_settings(settings_path)
             st.session_state.settings = config_settings
             st.rerun()
@@ -380,7 +389,7 @@ with st.sidebar:
     
     st.divider()
 
-    if st.button("Reset Chat History", key="clear_chat"):
+    if st.button("Reset Chat History", key="clear_chat"):  # This button shouldn't be disabled
         st.session_state.messages = []
         thread_id = reset_thread_id()
         st.session_state.workflow_active = False
@@ -393,13 +402,14 @@ with st.sidebar:
         max_value=65535,
         value=st.session_state.get("alert_queue_port", 8001),
         step=1,
+        disabled=disable_controls,
         help="Port to run the Alert Queue service on (default: 8001)"
     )
     st.session_state["alert_queue_port"] = alert_queue_port
 
     alert_queue_running = st.session_state.alert_queue_process is not None and st.session_state.alert_queue_process.poll() is None
     if alert_queue_running:
-        if st.button("🛑 Stop Alert Queue", key="stop_alert_queue_btn"):
+        if st.button("🛑 Stop Alert Queue", key="stop_alert_queue_btn", disabled=disable_controls):
             try:
                 st.session_state.alert_queue_process.terminate()
                 st.session_state.alert_queue_process.wait(timeout=5)
@@ -413,7 +423,7 @@ with st.sidebar:
         alert_queue_doc_url = f"http://localhost:{alert_queue_port}/docs"
         st.caption(f"Alert Queue Docs: {alert_queue_doc_url}")
     else:
-        if st.button("▶️ Start Alert Queue", key="start_alert_queue_btn"):
+        if st.button("▶️ Start Alert Queue", key="start_alert_queue_btn", disabled=disable_controls):
             try:
                 alert_queue_process = subprocess.Popen([
                     sys.executable, "alert_queue.py", "--port", str(alert_queue_port)
@@ -471,30 +481,11 @@ elif agent_type == "Full Multi-Agent Workflow":
                 st.markdown(f"{i+1}. {rule}")
         else:
             st.markdown("No golden rules configured")
-    # st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
-    
-    # Add device info display for Multi-Agent as well
-    # device_info = {
-    #     "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-    #     "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
-    #     "SSH Port": os.getenv("DEVICE_PORT", "22")
-    # }
-    # st.sidebar.subheader("Device Information")
-    # for key, value in device_info.items():
-    #     st.sidebar.text(f"{key}: {value}")
+
 else:
     st.markdown("### 🖥️ Command Executor")
     st.markdown("Enter a network command to execute on a device. The agent will determine if it's an operational or configuration command and execute it appropriately.")
     st.info("Currently running in: " + ("SIMULATION mode" if st.session_state.settings["simulation_mode"] else "REAL EXECUTION mode via SSH"))
-    # Add device info display
-    # device_info = {
-    #     "Hostname": os.getenv("DEVICE_HOSTNAME", "192.0.2.100"),
-    #     "Device Type": os.getenv("DEVICE_TYPE", "cisco_ios"),
-    #     "SSH Port": os.getenv("DEVICE_PORT", "22")
-    # }
-    # st.sidebar.subheader("Device Information")
-    # for key, value in device_info.items():
-    #     st.sidebar.text(f"{key}: {value}")
 
 # Initialize chat history in session state if it doesn't exist
 if "messages" not in st.session_state:
@@ -544,7 +535,8 @@ def dequeue_oldest_alert(alert_queue_file):
         except Exception:
             return oldest_alert_json.strip()
 
-if st.button('Check Alert Queue', key='check_alert_queue'):
+# Check if we're in Full Multi-Agent Workflow mode to enable/disable the button
+if st.button('Check Alert Queue', key='check_alert_queue', disabled=agent_type != "Full Multi-Agent Workflow"):
     alert_content = dequeue_oldest_alert(alert_queue_file)
     if alert_content:
         st.session_state.alert_queue_user_input = alert_content
@@ -843,6 +835,10 @@ if user_input:
                     return formatted_output
             
             response = asyncio.run(get_response())
+            # Print out the response to chat interface
+            if agent_type != "Full Multi-Agent Workflow":
+                # For non-workflow agents, just display the response directly
+                message_placeholder.markdown(response)
             
             # Reset the current response accumulator
             st.session_state.current_response = None

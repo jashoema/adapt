@@ -14,6 +14,5 @@ dataclasses
 pathlib
 datetime
 uuid
-napalm
 fastapi
 uvicorn

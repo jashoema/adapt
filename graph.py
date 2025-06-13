@@ -45,8 +45,7 @@ from agents.models import (
     ActionExecutorDeps,
     ActionAnalyzerDependencies,
     ResultSummaryDependencies,
-    ResultSummary,
-    DeviceCredentials
+    ResultSummary
 )
 
 # Load environment variables
@@ -127,7 +126,7 @@ def load_network_inventory(file_path: str) -> Dict[str, Any]:
         Dict[str, Any]: Dictionary containing network device inventory
         
     Loads credentials from environment variables if not specified in the inventory.
-    Validates required fields for NAPALM device connection.
+    Validates required fields for Netmiko device connection.
     """
     default_inventory = {"devices": {}}
     
@@ -318,21 +317,11 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                             logger.info(f"Closed existing Netmiko connection before creating a new one")
                         except Exception as e:
                             # Do nothing because the connection has probably already been closed
-                            pass
-
-                    # Map device_type to Netmiko device type - add more mappings as needed
-                    netmiko_device_type_map = {
-                        'ios': 'cisco_ios',
-                        'iosxr': 'cisco_xr',
-                        'nxos': 'cisco_nxos',
-                        'junos': 'juniper_junos'
-                    }
-                    
-                    netmiko_device_type = netmiko_device_type_map.get(device_type, device_type)
-                    
+                            pass       
+                                 
                     # Create a device dictionary for Netmiko
                     device_dict = {
-                        'device_type': netmiko_device_type,
+                        'device_type': device_type,
                         'host': host,
                         'username': username,
                         'password': password,
@@ -353,11 +342,11 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                         facts['hostname'] = hostname
                         
                         # Parse facts based on device type
-                        parsed_facts = parse_device_facts(netmiko_device_type, output)
+                        parsed_facts = parse_device_facts(device_type, output)
                         facts.update(parsed_facts)
                         
                         # Get interfaces using helper function
-                        facts['interface_list'] = get_interface_list(NETMIKO_CONNECTION, netmiko_device_type)
+                        facts['interface_list'] = get_interface_list(NETMIKO_CONNECTION, device_type)
                                     
                         # Default fallback - use what we have                        
                         if 'fqdn' not in facts:
@@ -379,7 +368,7 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     # Log successful connection
                     logger.info(f"Successfully connected to {hostname}")
                 except Exception as e:
-                    error_message = f"Failed to initialize NAPALM driver: {str(e)}"
+                    error_message = f"Failed to initialize Netmiko driver: {str(e)}"
                     logger.error(error_message)
                     device_facts["reachable"] = False
                     device_facts["errors"].append(error_message)
@@ -437,8 +426,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
 
 {"### Errors:" if device_facts["errors"] else ""}
 {"".join([f"- {error}\n" for error in device_facts["errors"]])}
-""")    # Update the state with the initialized dependencies
-    # No need to include device_driver_params as we're using the global NAPALM_DEVICE_DRIVER
+""")    
+    # Update the state with the initialized dependencies
     return {
         **state,
         "inventory": inventory,
