@@ -224,19 +224,10 @@ with st.sidebar:
         options=[
             "Full Multi-Agent Workflow",
             "Fault Summarizer Agent",
-            "Action Planner Agent",
-            "Action Executor Agent",
-            "Action Analyzer Agent",
-            "Summary Report Agent",
             "Hello World Agent"
         ],
         index=0,
-        help="Select the agent or workflow you want to run.")
-    # agent_type = st.radio(
-    #     "Choose an workflow option:",
-    #     ["Full Multi-Agent Workflow", "Fault Summarizer Agent", "Action Planner Agent", "Action Executor Agent", "Action Analyzer Agent", "Summary Report Agent", "Hello World Agent"],
-    #     index=0
-    # )
+        help="Select the agent or workflow you want to run. Most agents are currently unavailable for execution in standalone mode.")
     
     # Determine if controls should be disabled (when not using Full Multi-Agent Workflow)
     disable_controls = agent_type != "Full Multi-Agent Workflow"
@@ -445,7 +436,7 @@ with st.sidebar:
 # Display appropriate header and description based on selected agent
 if agent_type == "Hello World Agent":
     st.markdown("### 👋 Hello World Agent")
-    st.markdown("This is a simple hello-world agent that responds with a friendly greeting.")
+    st.markdown("This is a simple hello-world agent for validating LLM connectivity. It always responds to the user with 'Hello, world!'")
 elif agent_type == "Fault Summarizer Agent":
     st.markdown("### 🔧 Fault Summarizer")
     st.markdown("Describe a network fault, and this agent will analyze and summarize the issue.")
@@ -647,26 +638,25 @@ if user_input:
                     result = await run_fault_summary(user_input, deps=fault_summary_deps)
                     # Format structured output for display
                     fault_summary = result.output
-                    formatted_output = f"""
-### Network Fault Alert Summary
+                    fault_summary = result.output
 
-**Alert Title:** {fault_summary.title}
+                    # Generate output showing the raw alert that was received and display fault summary
+                    formatted_output = f"""## 🚨 Alert Received
 
-**Alert Summary:** {fault_summary.summary}
-
-**Target Device:** {fault_summary.hostname}
-
-**Timestamp:** {fault_summary.timestamp}
-
-**Severity:** {fault_summary.severity}
-
-**Original Alert Details (JSON)**
-
-```json
-{str(fault_summary.metadata).replace("'", '"')}
+The following alert has been received:
+```
+{user_input}
 ```
 
-                    """
+## 📊 Fault Summary
+
+**Title:** {fault_summary.title}  
+**Summary:** {fault_summary.summary}  
+**Device:** {fault_summary.hostname}  
+**Severity:** {fault_summary.severity}  
+**Timestamp:** {fault_summary.timestamp.strftime('%Y-%m-%d %H:%M:%S')}  
+**Additional Metadata:** {fault_summary.metadata}
+"""
                     return formatted_output
                 elif agent_type == "Action Planner Agent":
                     if st.session_state.settings["debug_mode"]:
