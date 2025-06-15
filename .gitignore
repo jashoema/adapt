@@ -39,9 +39,6 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/
-
 # Logs
 workbench/
 static/*.md

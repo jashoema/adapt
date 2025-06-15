@@ -86,20 +86,10 @@ class HelloWorldDependencies(BaseModel):
 class ActionExecutorDeps:
     """Dependencies for the action executor agent."""
     current_step: TroubleshootingStep
-    device_driver: Any  # The actual NAPALM device driver object
+    device_driver: Any  # The actual Netmiko device driver object
     device_facts: Dict[str, Any]
     settings: Dict[str, Any]
     logger: Optional[Any] = None
-
-# DeviceCredentials
-class DeviceCredentials:
-    hostname: str
-    device_type: str
-    username: str
-    password: str
-    port: int = 22
-    secret: str | None = None  # For enable/privileged mode
-    # Add more fields as required for different device types
 
 # CommandOutput
 class CommandOutput(TypedDict):

@@ -6,7 +6,7 @@ import asyncio
 from netmiko import ConnectHandler
 
 from pydantic_ai import RunContext, ModelRetry
-from .netmiko_utils import parse_device_facts, get_interface_list
+from utils.netmiko_utils import parse_device_facts, get_interface_list
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("action_executor.agent_tools")

@@ -22,7 +22,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from netmiko import ConnectHandler
 from pydantic import BaseModel, Field
-from agents.action_executor.netmiko_utils import parse_device_facts, get_interface_list
+from utils.netmiko_utils import parse_device_facts, get_interface_list
 from langgraph.types import interrupt, Command
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -45,8 +45,7 @@ from agents.models import (
     ActionExecutorDeps,
     ActionAnalyzerDependencies,
     ResultSummaryDependencies,
-    ResultSummary,
-    DeviceCredentials
+    ResultSummary
 )
 
 # Load environment variables
@@ -127,7 +126,7 @@ def load_network_inventory(file_path: str) -> Dict[str, Any]:
         Dict[str, Any]: Dictionary containing network device inventory
         
     Loads credentials from environment variables if not specified in the inventory.
-    Validates required fields for NAPALM device connection.
+    Validates required fields for Netmiko device connection.
     """
     default_inventory = {"devices": {}}
     
@@ -242,17 +241,15 @@ async def run_fault_summary_node(state: NetworkTroubleshootingState, writer) -> 
     result = await run_fault_summary(alert_raw_data, deps=fault_summary_deps)
     fault_summary = result.output
 
-    # Generate output showing the raw alert that was received
+    # Generate output showing the raw alert that was received and display fault summary
     writer(f"""## 🚨 Alert Received
 
 The following alert has been received:
 ```
 {alert_raw_data}
 ```
-""")
 
-    # Generate human-readable output for the writer based on FaultSummary class structure with Markdown formatting
-    writer(f"""\n\n## 📊 Fault Summary
+## 📊 Fault Summary
 
 **Title:** {fault_summary.title}  
 **Summary:** {fault_summary.summary}  
@@ -320,21 +317,11 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                             logger.info(f"Closed existing Netmiko connection before creating a new one")
                         except Exception as e:
                             # Do nothing because the connection has probably already been closed
-                            pass
-
-                    # Map device_type to Netmiko device type - add more mappings as needed
-                    netmiko_device_type_map = {
-                        'ios': 'cisco_ios',
-                        'iosxr': 'cisco_xr',
-                        'nxos': 'cisco_nxos',
-                        'junos': 'juniper_junos'
-                    }
-                    
-                    netmiko_device_type = netmiko_device_type_map.get(device_type, device_type)
-                    
+                            pass       
+                                 
                     # Create a device dictionary for Netmiko
                     device_dict = {
-                        'device_type': netmiko_device_type,
+                        'device_type': device_type,
                         'host': host,
                         'username': username,
                         'password': password,
@@ -355,11 +342,11 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                         facts['hostname'] = hostname
                         
                         # Parse facts based on device type
-                        parsed_facts = parse_device_facts(netmiko_device_type, output)
+                        parsed_facts = parse_device_facts(device_type, output)
                         facts.update(parsed_facts)
                         
                         # Get interfaces using helper function
-                        facts['interface_list'] = get_interface_list(NETMIKO_CONNECTION, netmiko_device_type)
+                        facts['interface_list'] = get_interface_list(NETMIKO_CONNECTION, device_type)
                                     
                         # Default fallback - use what we have                        
                         if 'fqdn' not in facts:
@@ -381,7 +368,7 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
                     # Log successful connection
                     logger.info(f"Successfully connected to {hostname}")
                 except Exception as e:
-                    error_message = f"Failed to initialize NAPALM driver: {str(e)}"
+                    error_message = f"Failed to initialize Netmiko driver: {str(e)}"
                     logger.error(error_message)
                     device_facts["reachable"] = False
                     device_facts["errors"].append(error_message)
@@ -439,8 +426,8 @@ async def run_init_deps_node(state: NetworkTroubleshootingState, writer) -> Netw
 
 {"### Errors:" if device_facts["errors"] else ""}
 {"".join([f"- {error}\n" for error in device_facts["errors"]])}
-""")    # Update the state with the initialized dependencies
-    # No need to include device_driver_params as we're using the global NAPALM_DEVICE_DRIVER
+""")    
+    # Update the state with the initialized dependencies
     return {
         **state,
         "inventory": inventory,
@@ -481,9 +468,7 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
     
     # Run the action planner agent with the dependencies
     result = await run_action_planner("", deps=deps)
-    action_plan = result.output
-
-    # Generate human-readable output for the writer with Markdown formatting
+    action_plan = result.output    # Generate human-readable output for the writer with Markdown formatting
     steps_markdown = []
     for i, step in enumerate(action_plan):
         # Format commands as a bulleted list
@@ -497,7 +482,24 @@ async def run_action_planner_node(state: NetworkTroubleshootingState, writer) ->
 - **⚠️ Requires Approval:** {'Yes' if step.requires_approval else 'No'}
 """)
     
-    writer(f"""## 🔍 Action Plan
+    # Add note about custom instructions if they exist
+    custom_instructions_section = ""
+    if custom_instructions:
+        custom_instructions_section = f"""\n\n### ⚠️ Note: Custom Instructions Applied
+
+The following custom instructions have been identified for this fault and integrated into the action plan:
+
+```
+{custom_instructions}
+```
+
+"""
+    
+    writer(f"""
+
+{custom_instructions_section}
+
+## 🔍 Action Plan
 
 **Total Steps:** {len(action_plan)}
 
