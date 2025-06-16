@@ -10,7 +10,14 @@ Usage:
     python -m utils.generate_test
 
 The module will prompt for input describing the type of network fault to simulate,
-and will generate a YAML test file in the tests/ directory.
+and will generate                     edit_result = await test_generator_agent.run(
+                        f"The user wants to modify the current network troubleshooting test. Their instructions are:\n\n"
+                        f"{edit_prompt}\n\n"
+                        f"Make the requested changes to the test and return the complete updated test JSON "
+                        f"that includes all necessary components (alert_payload, custom_instructions, expected_rca, commands, and device_facts).",
+                        deps=deps,
+                        message_history=message_history
+                    )est file in the tests/ directory.
 """
 
 import os
@@ -46,6 +53,7 @@ class TestJSON(BaseModel):
     custom_instructions: str = Field(..., description="Custom instructions for diagnosing and fixing the network fault")
     expected_rca: str = Field(..., description="Expected root cause analysis for the network fault")
     commands: Dict[str, str] = Field(default_factory=dict, description="Dictionary mapping commands to their simulated outputs")
+    device_facts: Dict[str, Any] = Field(default_factory=dict, description="Dictionary containing device facts like hostname, OS version, model, and interfaces")
 
 
 class TestSpec(BaseModel):
@@ -142,6 +150,22 @@ The simulated output must:
 
 ---
 
+## 5. `device_facts` (object)
+
+This section contains device information that would normally be collected during device connectivity. It MUST include:
+
+- `reachable` (boolean): Whether the device is reachable (typically true)
+- `hostname` (string): The hostname of the device (should match the device in alert_payload)
+- `vendor` (string): The vendor name (e.g., cisco, juniper)
+- `model` (string): The device model (e.g., CSR1000v, ASR9000, etc.)
+- `os` (string): The operating system (e.g., ios, iosxr, nxos, junos)
+- `os_version` (string): The OS version (e.g., 16.9.3, 7.3.2)
+- `interface_list` (array): List of interfaces on the device
+- `fqdn` (string): Fully qualified domain name (e.g., router1.example.com)
+- `serial_number` (string): The device serial number
+- `uptime` (number): Device uptime in seconds
+- `errors` (array): List of errors (empty array if no errors)
+
 ## OUTPUT FORMAT
 
 Return a single JSON object with the following top-level keys:
@@ -149,6 +173,7 @@ Return a single JSON object with the following top-level keys:
 - `custom_instructions` (string)
 - `expected_rca` (string)
 - `commands` (object)
+- `device_facts` (object)
 
 Ensure it is:
 - Fully escaped, valid JSON
@@ -163,9 +188,11 @@ Ensure it is:
 3. Write `custom_instructions` with diagnostic and remediation steps that lead towards the root cause and remediation
 4. Generate realistic simulated output for every CLI command
 5. Provide a clear RCA that explains how the evidence points to the true cause
+6. Create `device_facts` that are consistent with the device in the alert payload and command outputs
 
 **Do not skip the `commands` section.**  
 **Do not leave any command without an output.**  
+**Ensure `device_facts` has all required fields and is consistent with the scenario.**
 **Return a complete and valid JSON object.**
 
 ---
@@ -178,7 +205,9 @@ After generating the JSON, evaluate your own output by answering:
 2. Is the command output realistic and consistent with the fault?
 3. Does the `expected_rca` cite evidence that actually appears in the command output?
 4. Are any fields incomplete, redundant, or inconsistent?
-5. Are is the command output consistent across all commands to indicate that they were all retrieved from the same device?  For example, does the same field or counter show the same value in multiple commands?
+5. Is the command output consistent across all commands to indicate that they were all retrieved from the same device? For example, does the same field or counter show the same value in multiple commands?
+6. Does `device_facts` contain all required fields and are they consistent with the scenario?
+7. Do the hostname and device information in `device_facts` match those in the `alert_payload`?
 
 If the answer to any of these is "no", revise the JSON output accordingly.
 
@@ -297,7 +326,8 @@ Generate a complete test JSON file for a network troubleshooting scenario based 
                 "alert_payload": test_yaml.alert_payload,
                 "custom_instructions": test_yaml.custom_instructions,
                 "expected_rca": test_yaml.expected_rca,
-                "commands": test_yaml.commands
+                "commands": test_yaml.commands,
+                "device_facts": test_yaml.device_facts
             },
             f,
             default_flow_style=False,
@@ -409,6 +439,10 @@ Generate a complete test YAML file for a network troubleshooting scenario with t
                 print("-"*40)
                 print(test_yaml.expected_rca)
                 
+                print("\nDEVICE FACTS:")
+                print("-"*40)
+                print(test_yaml.device_facts)
+                
                 print("\nCOMMANDS:")
                 print("-"*40)
                 for cmd, output in test_yaml.commands.items():
@@ -446,7 +480,7 @@ Generate a complete test YAML file for a network troubleshooting scenario with t
                         f"The user wants to modify the current network troubleshooting test. Their instructions are:\n\n"
                         f"{edit_prompt}\n\n"
                         f"Make the requested changes to the test and return the complete updated test JSON "
-                        f"that includes all necessary components (alert_payload, custom_instructions, expected_rca, and commands).",
+                        f"that includes all necessary components (alert_payload, custom_instructions, expected_rca, commands, and device_facts).",
                         deps=deps,
                         message_history=message_history
                     )
@@ -506,7 +540,8 @@ Generate a complete test YAML file for a network troubleshooting scenario with t
                         "alert_payload": test_yaml.alert_payload,
                         "custom_instructions": test_yaml.custom_instructions,
                         "expected_rca": test_yaml.expected_rca,
-                        "commands": test_yaml.commands
+                        "commands": test_yaml.commands,
+                        "device_facts": test_yaml.device_facts
                     },
                     f,
                     default_flow_style=False,
@@ -586,13 +621,13 @@ def load_existing_test(file_path: str) -> TestJSON:
             
             # Parse the YAML content
             test_data = yaml.safe_load(yaml_content)
-            
-            # Convert to TestJSON format
+              # Convert to TestJSON format
             return TestJSON(
                 alert_payload=test_data.get('alert_payload', '{}'),
                 custom_instructions=test_data.get('custom_instructions', ''),
                 expected_rca=test_data.get('expected_rca', ''),
-                commands=test_data.get('commands', {})
+                commands=test_data.get('commands', {}),
+                device_facts=test_data.get('device_facts', {})
             )
     except Exception as e:
         raise ValueError(f"Failed to load test file: {str(e)}")
@@ -627,7 +662,7 @@ async def modify_existing_test(file_path: str) -> int:
         # Create dependencies
         deps = TestGeneratorDeps(debug_mode=False)
         
-        # Create a prompt for the agent to understand the test context
+        # Create a prompt for the agent to understand the test context        
         prompt = f"""
 I'm loading an existing network troubleshooting test named '{test_name}' for you to analyze
 and modify as needed. Please become familiar with the test content.
@@ -642,6 +677,9 @@ CUSTOM INSTRUCTIONS:
 
 EXPECTED RCA:
 {test_yaml.expected_rca}
+
+DEVICE FACTS:
+{test_yaml.device_facts}
 
 COMMANDS:
 {str(test_yaml.commands)}
@@ -679,6 +717,10 @@ Please analyze this test and maintain its structure and format while making any 
             print("-"*40)
             print(test_yaml.expected_rca)
             
+            print("\nDEVICE FACTS:")
+            print("-"*40)
+            print(test_yaml.device_facts)
+            
             print("\nCOMMANDS:")
             print("-"*40)
             for cmd, output in test_yaml.commands.items():
@@ -709,7 +751,7 @@ Please analyze this test and maintain its structure and format while making any 
                     f"The user wants to modify the current network troubleshooting test. Their instructions are:\n\n"
                     f"{edit_prompt}\n\n"
                     f"Make the requested changes to the test and return the complete updated test JSON "
-                    f"that includes all necessary components (alert_payload, custom_instructions, expected_rca, and commands).",
+                    f"that includes all necessary components (alert_payload, custom_instructions, expected_rca, commands, and device_facts).",
                     deps=deps,
                     message_history=message_history
                 )
@@ -753,7 +795,8 @@ Please analyze this test and maintain its structure and format while making any 
                     "alert_payload": test_yaml.alert_payload,
                     "custom_instructions": test_yaml.custom_instructions,
                     "expected_rca": test_yaml.expected_rca,
-                    "commands": test_yaml.commands
+                    "commands": test_yaml.commands,
+                    "device_facts": test_yaml.device_facts
                 },
                 f,
                 default_flow_style=False,
