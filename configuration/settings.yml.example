@@ -16,10 +16,16 @@ test_name: ""
 # Maximum number of steps to execute in an action plan before escalating
 max_steps: 15
 
+# Step mode - When true, pauses between execution of each node in the workflow and waits for user input before proceeding
+step_mode: false
+
 # Adaptive mode - when true, allows the Action Analyzer to recommend new_action steps
 adaptive_mode: true
 
-golden_rules:
+# Golden rules - a list of rules that must always be followed by each agent
   - "rule1"
   - "rule2"
   - "rule3"
+
+# Maximum number of node traversals the graph is allowed before hitting a GraphRecursionLimit error
+recursion_limit: 50
